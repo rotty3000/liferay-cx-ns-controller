@@ -52,12 +52,12 @@ type ClientExtensionNamespaceReconciler struct {
 }
 
 // RBAC for ConfigMaps: We only need to read them.
-//+kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 // Note: Delete permission for ConfigMaps might be needed if we decide to clean up synced CMs explicitly, but OwnerReferences should handle it.
 // RBAC for Namespaces: We need to manage their lifecycle.
-//+kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create;delete;update;patch
+// +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create;delete;update;patch
 // RBAC for Events: Optional, but good for emitting events.
-//+kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -91,7 +91,7 @@ func (r *ClientExtensionNamespaceReconciler) Reconcile(ctx context.Context, req 
 	}
 
 	// 3. Extract virtualInstanceId
-	virtualInstanceID := getLabel(sourceCM, liferayVirtualInstanceIdLabelKey)
+	virtualInstanceID := getVirtualInstanceIdLabel(sourceCM)
 	if virtualInstanceID == "" {
 		log.Info("ConfigMap is missing or has empty virtualInstanceId in labels, skipping", "dataKey", liferayVirtualInstanceIdLabelKey)
 		// Consider emitting a Kubernetes event here to warn the user.
@@ -173,7 +173,7 @@ func (r *ClientExtensionNamespaceReconciler) Reconcile(ctx context.Context, req 
 		}
 
 		// Sync the sourceCM into this managed namespace (nsToUpdate)
-		if err := r.syncSourceConfigMapToNamespace(ctx, sourceCM, nsToUpdate, virtualInstanceID); err != nil {
+		if err := r.syncSourceConfigMapToNamespace(ctx, sourceCM, nsToUpdate); err != nil {
 			logForNs.Error(err, "Failed to sync source ConfigMap to managed namespace", "sourceCM", sourceCM.Name)
 			return ctrl.Result{}, err // Requeue on error
 		}
@@ -206,7 +206,7 @@ func (r *ClientExtensionNamespaceReconciler) Reconcile(ctx context.Context, req 
 			log.Error(err, "Failed to get newly created default namespace for syncing CM", "namespace", ns.Name)
 			return ctrl.Result{}, err
 		}
-		if err := r.syncSourceConfigMapToNamespace(ctx, sourceCM, createdNs, virtualInstanceID); err != nil {
+		if err := r.syncSourceConfigMapToNamespace(ctx, sourceCM, createdNs); err != nil {
 			log.Error(err, "Failed to sync source ConfigMap to newly created default namespace", "sourceCM", sourceCM.Name, "namespace", createdNs.Name)
 			return ctrl.Result{}, err
 		}
@@ -216,7 +216,7 @@ func (r *ClientExtensionNamespaceReconciler) Reconcile(ctx context.Context, req 
 }
 
 // syncSourceConfigMapToNamespace ensures a copy of the sourceCM exists in the targetNamespace and is up-to-date.
-func (r *ClientExtensionNamespaceReconciler) syncSourceConfigMapToNamespace(ctx context.Context, sourceCM *corev1.ConfigMap, targetNamespace *corev1.Namespace, virtualInstanceID string) error {
+func (r *ClientExtensionNamespaceReconciler) syncSourceConfigMapToNamespace(ctx context.Context, sourceCM *corev1.ConfigMap, targetNamespace *corev1.Namespace) error {
 	log := logf.FromContext(ctx).WithValues("targetNamespace", targetNamespace.Name, "sourceConfigMap", sourceCM.Name)
 
 	syncedCMName := sourceCM.Name // Use the original ConfigMap name
@@ -298,7 +298,7 @@ func (r *ClientExtensionNamespaceReconciler) newSyncedConfigMap(sourceCM *corev1
 	labelsToSync[syncedFromConfigMapLabelKey] = sourceCM.Namespace + "/" + sourceCM.Name
 	// Add other labels from sourceCM if they are safe and desired.
 	// For example, the virtualInstanceIdLabelKey itself.
-	if vid := getLabel(sourceCM, liferayVirtualInstanceIdLabelKey); vid != "" {
+	if vid := getVirtualInstanceIdLabel(sourceCM); vid != "" {
 		labelsToSync[liferayVirtualInstanceIdLabelKey] = vid
 	}
 
@@ -374,7 +374,7 @@ func (r *ClientExtensionNamespaceReconciler) SetupWithManager(mgr ctrl.Manager) 
 					newCM, okNew := e.ObjectNew.(*corev1.ConfigMap)
 					if okOld && okNew {
 						// If it's still a VI CM, check if the ID changed
-						if isNewVI && getLabel(oldCM, liferayVirtualInstanceIdLabelKey) != getLabel(newCM, liferayVirtualInstanceIdLabelKey) {
+						if isNewVI && getVirtualInstanceIdLabel(oldCM) != getVirtualInstanceIdLabel(newCM) {
 							return true // ID changed, reconcile
 						}
 					}
@@ -414,11 +414,11 @@ func (r *ClientExtensionNamespaceReconciler) SetupWithManager(mgr ctrl.Manager) 
 		Complete(r)
 }
 
-func getLabel(cm *corev1.ConfigMap, key string) string {
+func getVirtualInstanceIdLabel(cm *corev1.ConfigMap) string {
 	if cm.Labels == nil {
 		return ""
 	}
-	return cm.Labels[key]
+	return cm.Labels[liferayVirtualInstanceIdLabelKey]
 }
 
 // isLiferayVirtualInstanceCM checks if the object is a ConfigMap representing a Liferay Virtual Instance.
@@ -470,12 +470,4 @@ func ownerReferencesDeepEqual(expected, actual []metav1.OwnerReference) bool {
 		}
 	}
 	return true
-}
-
-// labelsDeepEqual checks if two label maps are semantically equal.
-func labelsDeepEqual(expected, actual map[string]string) bool {
-	// This function is no longer strictly needed if using reflect.DeepEqual directly on label maps
-	// for the before/after comparison during an update.
-	// However, if used, it should compare that all 'expected' labels exist in 'actual' with the correct values.
-	return reflect.DeepEqual(expected, actual)
 }
