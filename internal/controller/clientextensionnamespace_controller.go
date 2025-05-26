@@ -260,7 +260,7 @@ func (r *ClientExtensionNamespaceReconciler) SetupWithManager(mgr ctrl.Manager) 
 		For(&corev1.ConfigMap{}).
 		Owns(&corev1.Namespace{}). // Watch for Namespace events that this controller owns
 		WithEventFilter(liferayVICMPredicate).
-		// Named("clientextensionnamespace") // Optional: give the controller a specific name for metrics/logging
+		Named(controllerName).
 		Complete(r)
 }
 
