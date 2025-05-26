@@ -40,7 +40,6 @@ const (
 	// liferayVirtualInstanceIdLabelKey is the key in ConfigMap.Data that holds the Virtual Instance ID.
 	liferayVirtualInstanceIdLabelKey = "dxp.lxc.liferay.com/virtualInstanceId"
 	applicationAlias                 = "cx" // Default application alias for the namespace
-	syncedConfigMapNamePrefix        = "liferay-virtual-instance-"
 	syncedFromConfigMapLabelKey      = "lxc.liferay.com/synced-from-configmap"
 	managedByLabelKey                = "app.kubernetes.io/managed-by"
 	controllerName                   = "liferay-cx-ns-controller"
@@ -225,14 +224,14 @@ func (r *ClientExtensionNamespaceReconciler) Reconcile(ctx context.Context, req 
 func (r *ClientExtensionNamespaceReconciler) syncSourceConfigMapToNamespace(ctx context.Context, sourceCM *corev1.ConfigMap, targetNamespace *corev1.Namespace, virtualInstanceID string) error {
 	log := logf.FromContext(ctx).WithValues("targetNamespace", targetNamespace.Name, "sourceConfigMap", sourceCM.Name)
 
-	syncedCMName := syncedConfigMapNamePrefix + virtualInstanceID
+	syncedCMName := sourceCM.Name // Use the original ConfigMap name
 	syncedCM := &corev1.ConfigMap{}
 
 	err := r.Get(ctx, client.ObjectKey{Namespace: targetNamespace.Name, Name: syncedCMName}, syncedCM)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			// Synced ConfigMap does not exist, create it.
-			log.Info("Synced ConfigMap not found in target namespace, creating.", "syncedCMName", syncedCMName)
+			log.Info("ConfigMap copy not found in target namespace, creating.", "configMapName", syncedCMName)
 			newSyncedCM := r.newSyncedConfigMap(sourceCM, targetNamespace, syncedCMName)
 			if err := ctrl.SetControllerReference(targetNamespace, newSyncedCM, r.Scheme); err != nil {
 				log.Error(err, "Failed to set owner reference on new synced ConfigMap")
@@ -242,7 +241,7 @@ func (r *ClientExtensionNamespaceReconciler) syncSourceConfigMapToNamespace(ctx 
 				log.Error(errCreate, "Failed to create synced ConfigMap in target namespace")
 				return errCreate
 			}
-			log.Info("Successfully created synced ConfigMap in target namespace.")
+			log.Info("Successfully created ConfigMap copy in target namespace.")
 			return nil
 		}
 		// Other error getting the synced ConfigMap
@@ -251,7 +250,7 @@ func (r *ClientExtensionNamespaceReconciler) syncSourceConfigMapToNamespace(ctx 
 	}
 
 	// Synced ConfigMap exists, ensure it's up-to-date.
-	log.Info("Synced ConfigMap found in target namespace, ensuring it is up-to-date.", "syncedCMName", syncedCMName)
+	log.Info("ConfigMap copy found in target namespace, ensuring it is up-to-date.", "configMapName", syncedCMName)
 
 	// Compare Data and Labels (excluding controller-specific labels like ownerRef or our own synced-from label)
 	// For simplicity, we'll update if Data or specific source labels differ.
@@ -283,20 +282,20 @@ func (r *ClientExtensionNamespaceReconciler) syncSourceConfigMapToNamespace(ctx 
 	// if !reflect.DeepEqual(originalSyncedCM, syncedCM) { needsUpdate = true }
 
 	if needsUpdate || !metav1.IsControlledBy(syncedCM, targetNamespace) { // Check if owner ref actually changed or data changed
-		log.Info("Updating synced ConfigMap in target namespace.")
+		log.Info("Updating ConfigMap copy in target namespace.")
 		if errUpdate := r.Update(ctx, syncedCM); errUpdate != nil {
 			log.Error(errUpdate, "Failed to update synced ConfigMap in target namespace")
 			return errUpdate
 		}
-		log.Info("Successfully updated synced ConfigMap in target namespace.")
+		log.Info("Successfully updated ConfigMap copy in target namespace.")
 	} else {
-		log.Info("Synced ConfigMap is already up-to-date.")
+		log.Info("ConfigMap copy is already up-to-date.")
 	}
 	return nil
 }
 
 // newSyncedConfigMap creates a new ConfigMap object to be synced into a managed namespace.
-func (r *ClientExtensionNamespaceReconciler) newSyncedConfigMap(sourceCM *corev1.ConfigMap, targetNamespace *corev1.Namespace, name string) *corev1.ConfigMap {
+func (r *ClientExtensionNamespaceReconciler) newSyncedConfigMap(sourceCM *corev1.ConfigMap, targetNamespace *corev1.Namespace, syncedCMName string) *corev1.ConfigMap {
 	// Copy relevant labels from source. Be careful not to copy labels that might cause issues
 	// or conflict with the target namespace's own management.
 	// For now, we'll start with minimal labels and the synced-from indicator.
@@ -310,7 +309,7 @@ func (r *ClientExtensionNamespaceReconciler) newSyncedConfigMap(sourceCM *corev1
 
 	return &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
+			Name:      syncedCMName, // This is sourceCM.Name passed in
 			Namespace: targetNamespace.Name,
 			Labels:    labelsToSync,
 			// Annotations could also be synced if needed
