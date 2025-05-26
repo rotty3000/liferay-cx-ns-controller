@@ -200,7 +200,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := (&controller.ConfigMapReconciler{
+	if err := (&controller.ClientExtensionNamespaceReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
