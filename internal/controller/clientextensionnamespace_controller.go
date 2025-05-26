@@ -77,14 +77,9 @@ func (r *ClientExtensionNamespaceReconciler) Reconcile(ctx context.Context, req 
 		return ctrl.Result{}, err
 	}
 
-	// 0. Check if the ConfigMap is in a managed namespace. If so, ignore it.
-	isManaged, err := r.isNamespaceManaged(ctx, sourceCM.Namespace)
-	if err != nil {
-		log.Error(err, "Failed to check if namespace is managed", "namespace", sourceCM.Namespace)
-		return ctrl.Result{}, err // Requeue on error
-	}
-	if isManaged {
-		log.Info("ConfigMap is in a managed namespace, skipping", "configMapNamespace", sourceCM.Namespace)
+	// 0. Check if this ConfigMap is a synced copy. If so, ignore it.
+	if _, ok := sourceCM.Labels[syncedFromConfigMapLabelKey]; ok {
+		log.Info("ConfigMap is a synced copy, skipping", "configMapName", sourceCM.Name, "namespace", sourceCM.Namespace)
 		return ctrl.Result{}, nil
 	}
 
@@ -338,15 +333,10 @@ func (r *ClientExtensionNamespaceReconciler) desiredNamespaceLabels(virtualInsta
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *ClientExtensionNamespaceReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	// Helper function for predicates to check if the ConfigMap's namespace is managed.
-	// This requires a client, so we pass it or use the reconciler's client.
-	// For simplicity in predicate definition, we might need to pass the client or context.
-	// However, predicates are usually synchronous and don't have easy access to the reconciler's state or a live context.
-	// A practical way is to fetch the namespace within the predicate if absolutely necessary,
-	// but this adds API calls. A simpler predicate approach is to filter based on CM properties only.
-	// Let's refine the predicate to check the CM's namespace directly if possible,
-	// or rely on the Reconcile function's check.
-	// For now, the Reconcile check is the primary guard. The predicate can do a basic check.
+	// Predicate to filter events.
+	// It will allow events if the ConfigMap:
+	// 1. Is a Liferay Virtual Instance CM (has the liferayMetadataTypeLabelKey).
+	// 2. Is NOT a synced copy (does NOT have the syncedFromConfigMapLabelKey).
 
 	// Predicate to filter for ConfigMaps that are Liferay Virtual Instances.
 	liferayVICMPredicate := predicate.Funcs{
@@ -355,10 +345,7 @@ func (r *ClientExtensionNamespaceReconciler) SetupWithManager(mgr ctrl.Manager) 
 			if !ok {
 				return false
 			}
-			// Basic check: if the CM's namespace *name* matches a pattern of managed namespaces,
-			// we might skip. However, relying on name pattern is brittle.
-			// The Reconcile function's label check is more robust.
-			return isLiferayVirtualInstanceCM(cm) // && !r.isLikelyManagedNamespace(cm.Namespace)
+			return isLiferayVirtualInstanceCM(cm) && !isSyncedConfigMap(cm)
 		},
 		UpdateFunc: func(e event.UpdateEvent) bool {
 			// Reconcile if the new object is a Liferay VI CM,
@@ -368,14 +355,14 @@ func (r *ClientExtensionNamespaceReconciler) SetupWithManager(mgr ctrl.Manager) 
 			if e.ObjectNew != nil {
 				cmNew, ok := e.ObjectNew.(*corev1.ConfigMap)
 				if ok {
-					isNewVI = isLiferayVirtualInstanceCM(cmNew) // && !r.isLikelyManagedNamespace(cmNew.Namespace)
+					isNewVI = isLiferayVirtualInstanceCM(cmNew) && !isSyncedConfigMap(cmNew)
 				}
 			}
 			isOldVI := false
 			if e.ObjectOld != nil {
 				cmOld, ok := e.ObjectOld.(*corev1.ConfigMap)
 				if ok {
-					isOldVI = isLiferayVirtualInstanceCM(cmOld) // && !r.isLikelyManagedNamespace(cmOld.Namespace)
+					isOldVI = isLiferayVirtualInstanceCM(cmOld) && !isSyncedConfigMap(cmOld)
 				}
 
 			}
@@ -405,42 +392,26 @@ func (r *ClientExtensionNamespaceReconciler) SetupWithManager(mgr ctrl.Manager) 
 			if !ok {
 				return false
 			}
-			return isLiferayVirtualInstanceCM(cm) // && !r.isLikelyManagedNamespace(cm.Namespace)
+			return isLiferayVirtualInstanceCM(cm) && !isSyncedConfigMap(cm)
 		},
 		GenericFunc: func(e event.GenericEvent) bool {
 			cm, ok := e.Object.(*corev1.ConfigMap)
 			if !ok {
 				return false
 			}
-			return isLiferayVirtualInstanceCM(cm) // && !r.isLikelyManagedNamespace(cm.Namespace)
+			return isLiferayVirtualInstanceCM(cm) && !isSyncedConfigMap(cm)
 		},
 	}
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1.ConfigMap{}).
 		Owns(&corev1.Namespace{}). // Watch for Namespace events that this controller owns
+		// Also own the synced ConfigMaps. If a synced CM is deleted externally,
+		// this will trigger a reconcile of the source CM, which will then recreate the synced CM.
+		Owns(&corev1.ConfigMap{}).
 		WithEventFilter(liferayVICMPredicate).
 		Named(controllerName).
 		Complete(r)
-}
-
-// isNamespaceManaged checks if a given namespace is managed by this controller.
-func (r *ClientExtensionNamespaceReconciler) isNamespaceManaged(ctx context.Context, namespaceName string) (bool, error) {
-	if namespaceName == "" { // Should not happen for valid ConfigMaps
-		return false, nil
-	}
-	ns := &corev1.Namespace{}
-	err := r.Get(ctx, client.ObjectKey{Name: namespaceName}, ns)
-	if err != nil {
-		if errors.IsNotFound(err) {
-			return false, nil // Namespace doesn't exist, so not managed by us (yet)
-		}
-		return false, err // Other error
-	}
-	if ns.Labels != nil && ns.Labels[managedByLabelKey] == controllerName {
-		return true, nil
-	}
-	return false, nil
 }
 
 func getLabel(cm *corev1.ConfigMap, key string) string {
@@ -463,6 +434,15 @@ func isLiferayVirtualInstanceCM(obj client.Object) bool {
 	}
 
 	return labels[liferayMetadataTypeLabelKey] == liferayMetadataTypeLabelValue
+}
+
+// isSyncedConfigMap checks if the ConfigMap is a synced copy.
+func isSyncedConfigMap(cm *corev1.ConfigMap) bool {
+	if cm == nil || cm.Labels == nil {
+		return false
+	}
+	_, ok := cm.Labels[syncedFromConfigMapLabelKey]
+	return ok
 }
 
 // ownerReferencesDeepEqual checks if two slices of OwnerReference are semantically equal.
