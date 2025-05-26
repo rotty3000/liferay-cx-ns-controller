@@ -32,16 +32,15 @@ import (
 )
 
 const (
-	// liferayVirtualInstanceLabelKey is the label key to identify ConfigMaps representing Liferay Virtual Instances.
-	liferayVirtualInstanceLabelKey = "liferay.com/virtual-instance"
-	// liferayVirtualInstanceLabelValue is the expected value for the liferayVirtualInstanceLabelKey.
-	liferayVirtualInstanceLabelValue = "true"
-	// liferayVirtualInstanceIdDataKey is the key in ConfigMap.Data that holds the Virtual Instance ID.
-	liferayVirtualInstanceIdDataKey = "virtualInstanceId"
-	applicationAlias                = "cx" // Default application alias for the namespace
-	managedByLabelKey               = "app.kubernetes.io/managed-by"
-	controllerName                  = "liferay-cx-ns-controller"
-	virtualInstanceIdLabelKey       = "liferay.com/virtual-instance-id" // Label for the created namespace
+	// liferayMetadataTypeLabelKey is the label key to identify ConfigMaps representing Liferay Virtual Instances.
+	liferayMetadataTypeLabelKey = "lxc.liferay.com/metadataType"
+	// liferayMetadataTypeLabelValue is the expected value for the liferayVirtualInstanceLabelKey.
+	liferayMetadataTypeLabelValue = "dxp"
+	// liferayVirtualInstanceIdLabelKey is the key in ConfigMap.Data that holds the Virtual Instance ID.
+	liferayVirtualInstanceIdLabelKey = "dxp.lxc.liferay.com/virtualInstanceId"
+	applicationAlias                 = "cx" // Default application alias for the namespace
+	managedByLabelKey                = "app.kubernetes.io/managed-by"
+	controllerName                   = "liferay-cx-ns-controller"
 )
 
 // ClientExtensionNamespaceReconciler reconciles a ConfigMap object
@@ -83,11 +82,11 @@ func (r *ClientExtensionNamespaceReconciler) Reconcile(ctx context.Context, req 
 	}
 
 	// 3. Extract virtualInstanceId
-	virtualInstanceID, ok := cm.Data[liferayVirtualInstanceIdDataKey]
-	if !ok || virtualInstanceID == "" {
-		log.Info("ConfigMap is missing or has empty virtualInstanceId in data, skipping", "dataKey", liferayVirtualInstanceIdDataKey)
+	virtualInstanceID := getLabel(cm, liferayVirtualInstanceIdLabelKey)
+	if virtualInstanceID == "" {
+		log.Info("ConfigMap is missing or has empty virtualInstanceId in labels, skipping", "dataKey", liferayVirtualInstanceIdLabelKey)
 		// Consider emitting a Kubernetes event here to warn the user.
-		// r.Recorder.Eventf(cm, corev1.EventTypeWarning, "MissingData", "ConfigMap %s/%s is missing virtualInstanceId", cm.Namespace, cm.Name)
+		// r.Recorder.Eventf(cm, corev1.EventTypeWarning, "MissingLabel", "ConfigMap %s/%s is missing virtualInstanceId", cm.Namespace, cm.Name)
 		return ctrl.Result{}, nil // Do not requeue if data is malformed permanently.
 	}
 
@@ -194,8 +193,8 @@ func (r *ClientExtensionNamespaceReconciler) newNamespaceForConfigMap(name, virt
 // desiredNamespaceLabels returns the set of labels that should be on the namespace.
 func (r *ClientExtensionNamespaceReconciler) desiredNamespaceLabels(virtualInstanceID string) map[string]string {
 	return map[string]string{
-		managedByLabelKey:         controllerName,
-		virtualInstanceIdLabelKey: virtualInstanceID,
+		liferayVirtualInstanceIdLabelKey: virtualInstanceID,
+		managedByLabelKey:                controllerName,
 	}
 }
 
@@ -226,7 +225,7 @@ func (r *ClientExtensionNamespaceReconciler) SetupWithManager(mgr ctrl.Manager) 
 					newCM, okNew := e.ObjectNew.(*corev1.ConfigMap)
 					if okOld && okNew {
 						// If it's still a VI CM, check if the ID changed
-						if isNewVI && oldCM.Data[liferayVirtualInstanceIdDataKey] != newCM.Data[liferayVirtualInstanceIdDataKey] {
+						if isNewVI && getLabel(oldCM, liferayVirtualInstanceIdLabelKey) != getLabel(newCM, liferayVirtualInstanceIdLabelKey) {
 							return true // ID changed, reconcile
 						}
 					}
@@ -255,6 +254,13 @@ func (r *ClientExtensionNamespaceReconciler) SetupWithManager(mgr ctrl.Manager) 
 		Complete(r)
 }
 
+func getLabel(cm *corev1.ConfigMap, key string) string {
+	if cm.Labels == nil {
+		return ""
+	}
+	return cm.Labels[key]
+}
+
 // isLiferayVirtualInstanceCM checks if the object is a ConfigMap representing a Liferay Virtual Instance.
 func isLiferayVirtualInstanceCM(obj client.Object) bool {
 	cm, ok := obj.(*corev1.ConfigMap)
@@ -267,7 +273,7 @@ func isLiferayVirtualInstanceCM(obj client.Object) bool {
 		return false
 	}
 
-	return labels[liferayVirtualInstanceLabelKey] == liferayVirtualInstanceLabelValue
+	return labels[liferayMetadataTypeLabelKey] == liferayMetadataTypeLabelValue
 }
 
 // ownerReferencesDeepEqual checks if two slices of OwnerReference are semantically equal.
@@ -317,11 +323,11 @@ func labelsDeepEqual(expected, actual map[string]string) bool {
 	}
 	// If we also want to ensure no extra labels in actual:
 	if len(expected) != len(actual) && actual != nil { // Check actual != nil for the case where expected is empty
-		 for k := range actual {
-			 if _, ok := expected[k]; !ok {
-				 return false // actual has a key not in expected
-			 }
-		 }
+		for k := range actual {
+			if _, ok := expected[k]; !ok {
+				return false // actual has a key not in expected
+			}
+		}
 	}
 	return true
 }
