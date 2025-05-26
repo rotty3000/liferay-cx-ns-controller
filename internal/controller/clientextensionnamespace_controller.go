@@ -422,12 +422,7 @@ func getLabel(cm *corev1.ConfigMap, key string) string {
 }
 
 // isLiferayVirtualInstanceCM checks if the object is a ConfigMap representing a Liferay Virtual Instance.
-func isLiferayVirtualInstanceCM(obj client.Object) bool {
-	cm, ok := obj.(*corev1.ConfigMap)
-	if !ok {
-		return false // Not a ConfigMap
-	}
-
+func isLiferayVirtualInstanceCM(cm *corev1.ConfigMap) bool {
 	labels := cm.GetLabels()
 	if labels == nil {
 		return false
