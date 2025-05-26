@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"reflect"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -93,88 +94,97 @@ func (r *ClientExtensionNamespaceReconciler) Reconcile(ctx context.Context, req 
 	log = log.WithValues("virtualInstanceID", virtualInstanceID)
 
 	// 4. Construct the desired Namespace name
-	namespaceName := fmt.Sprintf("%s-%s", virtualInstanceID, applicationAlias)
-	log = log.WithValues("targetNamespace", namespaceName)
+	defaultNamespaceName := fmt.Sprintf("%s-%s", virtualInstanceID, applicationAlias)
+	log = log.WithValues("defaultTargetNamespace", defaultNamespaceName)
 
-	// 5. Check if the Namespace already exists
-	namespace := &corev1.Namespace{}
-	err := r.Get(ctx, client.ObjectKey{Name: namespaceName}, namespace)
-
-	if err != nil {
-		if errors.IsNotFound(err) {
-			// Namespace does not exist, create it
-			log.Info("Target namespace not found, creating new one.")
-			ns := r.newNamespaceForConfigMap(namespaceName, virtualInstanceID)
-			if err := ctrl.SetControllerReference(cm, ns, r.Scheme); err != nil {
-				log.Error(err, "Failed to set owner reference on new Namespace")
-				return ctrl.Result{}, err
-			}
-
-			log.Info("Creating Namespace", "namespace", ns.Name)
-			if err := r.Create(ctx, ns); err != nil {
-				log.Error(err, "Failed to create Namespace")
-				return ctrl.Result{}, err
-			}
-			log.Info("Successfully created Namespace")
-			return ctrl.Result{}, nil // No need to requeue immediately, Owns() will trigger if needed.
-		}
-		// Some other error occurred when trying to get the Namespace
-		log.Error(err, "Failed to get Namespace")
+	// 5. List all Namespaces associated with this Virtual Instance ID
+	namespaceList := &corev1.NamespaceList{}
+	listOpts := []client.ListOption{
+		client.MatchingLabels{liferayVirtualInstanceIdLabelKey: virtualInstanceID},
+	}
+	if err := r.List(ctx, namespaceList, listOpts...); err != nil {
+		log.Error(err, "Failed to list namespaces for virtual instance ID")
 		return ctrl.Result{}, err
 	}
 
-	// 6. Namespace already exists. Ensure it's correctly owned and labeled.
-	log.Info("Target namespace already exists. Ensuring owner reference and labels.")
+	defaultNamespaceFound := false
+	for i := range namespaceList.Items {
+		// Get a pointer to the item in the list to modify it directly for the update.
+		// This avoids issues with loop variable scope if we were to update item by value.
+		nsToUpdate := &namespaceList.Items[i]
+		logForNs := log.WithValues("namespace", nsToUpdate.Name)
 
-	// Make a copy to compare for changes later to avoid unnecessary updates
-	existingNamespace := namespace.DeepCopy()
-	needsUpdate := false
+		// Store original state for comparison to see if an update is needed
+		originalOwnerRefs := make([]metav1.OwnerReference, len(nsToUpdate.OwnerReferences))
+		copy(originalOwnerRefs, nsToUpdate.OwnerReferences)
 
-	// Ensure OwnerReference
-	// ctrl.SetControllerReference is idempotent.
-	if err := ctrl.SetControllerReference(cm, namespace, r.Scheme); err != nil {
-		log.Error(err, "Failed to ensure owner reference on existing Namespace")
-		return ctrl.Result{}, err
-	}
-	if !metav1.IsControlledBy(namespace, cm) { // A more explicit check
-		// This condition might be redundant if SetControllerReference always makes it controlled,
-		// but helps in understanding if an update is truly because of ownership.
-		// For simplicity, we rely on comparing the whole object later.
-	}
+		originalLabels := make(map[string]string)
+		if nsToUpdate.Labels != nil {
+			for k, v := range nsToUpdate.Labels {
+				originalLabels[k] = v
+			}
+		}
 
-	// Ensure labels
-	if namespace.Labels == nil {
-		namespace.Labels = make(map[string]string)
-	}
-	desiredLabels := r.desiredNamespaceLabels(virtualInstanceID)
-	for k, v := range desiredLabels {
-		if namespace.Labels[k] != v {
-			namespace.Labels[k] = v
+		// Ensure OwnerReference to the ConfigMap
+		if err := ctrl.SetControllerReference(cm, nsToUpdate, r.Scheme); err != nil {
+			logForNs.Error(err, "Failed to ensure owner reference on existing Namespace")
+			return ctrl.Result{}, err // Requeue on error
+		}
+
+		// Ensure standard labels are present and correct (preserve other existing labels)
+		if nsToUpdate.Labels == nil {
+			nsToUpdate.Labels = make(map[string]string)
+		}
+		desiredStdLabels := r.desiredNamespaceLabels(virtualInstanceID)
+		for k, v := range desiredStdLabels {
+			// This ensures our managed labels are set to the correct values.
+			// If a managed label already exists with a different value, it will be updated.
+			// If it doesn't exist, it will be added.
+			// Other labels not in desiredStdLabels will be preserved.
+			nsToUpdate.Labels[k] = v
+		}
+
+		// Check if an update to the Namespace object is actually needed
+		ownerRefsChanged := !ownerReferencesDeepEqual(originalOwnerRefs, nsToUpdate.OwnerReferences)
+		// reflect.DeepEqual is suitable for comparing label maps.
+		labelsChanged := !reflect.DeepEqual(originalLabels, nsToUpdate.Labels)
+
+		if ownerRefsChanged || labelsChanged {
+			logForNs.Info("Updating existing Namespace due to owner reference or label changes.")
+			if err := r.Update(ctx, nsToUpdate); err != nil {
+				logForNs.Error(err, "Failed to update existing Namespace")
+				return ctrl.Result{}, err
+			}
+			logForNs.Info("Successfully updated existing Namespace")
+		} else {
+			logForNs.Info("Existing Namespace is already in the desired state regarding owner and standard labels.")
+		}
+
+		if nsToUpdate.Name == defaultNamespaceName {
+			defaultNamespaceFound = true
 		}
 	}
 
-	// Check if an update is actually needed by comparing the modified object with its original state.
-	// This avoids unnecessary API calls if SetControllerReference or label setting didn't change anything.
-	// A simple way is to compare relevant parts or use a deep equal if performance is not critical for this comparison.
-	// For now, let's assume if we went through the motions, an update might be needed if anything changed.
-	// A more robust check would be a deep equal of existingNamespace and namespace.
-	// For simplicity, if owner references or labels could have changed, we'll try an update.
-	// Let's refine this: only update if ownerReferences or labels actually changed.
-
-	if !ownerReferencesDeepEqual(existingNamespace.OwnerReferences, namespace.OwnerReferences) ||
-		!labelsDeepEqual(existingNamespace.Labels, namespace.Labels) {
-		needsUpdate = true
-	}
-
-	if needsUpdate {
-		log.Info("Updating existing Namespace due to owner reference or label changes.")
-		if err := r.Update(ctx, namespace); err != nil {
-			log.Error(err, "Failed to update existing Namespace")
+	// 6. If the default namespace (virtualInstanceId-cx) was not found among the labeled namespaces, create it.
+	if !defaultNamespaceFound {
+		log.Info("Default target namespace not found, creating new one.", "namespaceName", defaultNamespaceName)
+		ns := r.newNamespaceForConfigMap(defaultNamespaceName, virtualInstanceID)
+		if err := ctrl.SetControllerReference(cm, ns, r.Scheme); err != nil {
+			log.Error(err, "Failed to set owner reference on new default Namespace")
 			return ctrl.Result{}, err
 		}
-		log.Info("Successfully updated existing Namespace")
-	} else {
-		log.Info("Namespace is already in the desired state.")
+
+		log.Info("Creating default Namespace", "namespace", ns.Name)
+		if err := r.Create(ctx, ns); err != nil {
+			if errors.IsAlreadyExists(err) {
+				// This can happen if another reconcile loop or process created it just now.
+				log.Info("Default namespace was created concurrently, will reconcile again.")
+				return ctrl.Result{Requeue: true}, nil
+			}
+			log.Error(err, "Failed to create default Namespace")
+			return ctrl.Result{}, err
+		}
+		log.Info("Successfully created default Namespace")
 	}
 
 	return ctrl.Result{}, nil
@@ -310,24 +320,8 @@ func ownerReferencesDeepEqual(expected, actual []metav1.OwnerReference) bool {
 
 // labelsDeepEqual checks if two label maps are semantically equal.
 func labelsDeepEqual(expected, actual map[string]string) bool {
-	if len(expected) != len(actual) {
-		// This check is only valid if we expect 'actual' to not have extra labels.
-		// If 'actual' can have more labels than 'expected', this check is too strict.
-		// For ensuring 'expected' labels are present and correct:
-		// return false
-	}
-	for k, v := range expected {
-		if actualVal, ok := actual[k]; !ok || actualVal != v {
-			return false
-		}
-	}
-	// If we also want to ensure no extra labels in actual:
-	if len(expected) != len(actual) && actual != nil { // Check actual != nil for the case where expected is empty
-		for k := range actual {
-			if _, ok := expected[k]; !ok {
-				return false // actual has a key not in expected
-			}
-		}
-	}
-	return true
+	// This function is no longer strictly needed if using reflect.DeepEqual directly on label maps
+	// for the before/after comparison during an update.
+	// However, if used, it should compare that all 'expected' labels exist in 'actual' with the correct values.
+	return reflect.DeepEqual(expected, actual)
 }
