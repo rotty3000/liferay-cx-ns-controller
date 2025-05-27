@@ -339,7 +339,7 @@ func (r *ClientExtensionNamespaceReconciler) SetupWithManager(mgr ctrl.Manager) 
 	// 2. Is NOT a synced copy (does NOT have the syncedFromConfigMapLabelKey).
 
 	// Predicate to filter for ConfigMaps that are Liferay Virtual Instances.
-	liferayVICMPredicate := predicate.Funcs{
+	eventFilter := predicate.Funcs{
 		CreateFunc: func(e event.CreateEvent) bool {
 			cm, ok := e.Object.(*corev1.ConfigMap)
 			if !ok {
@@ -409,7 +409,7 @@ func (r *ClientExtensionNamespaceReconciler) SetupWithManager(mgr ctrl.Manager) 
 		// Also own the synced ConfigMaps. If a synced CM is deleted externally,
 		// this will trigger a reconcile of the source CM, which will then recreate the synced CM.
 		Owns(&corev1.ConfigMap{}).
-		WithEventFilter(liferayVICMPredicate).
+		WithEventFilter(eventFilter).
 		Named(controllerName).
 		Complete(r)
 }
