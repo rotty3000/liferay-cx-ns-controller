@@ -95,7 +95,7 @@ func (r *ClientExtensionNamespaceReconciler) Reconcile(ctx context.Context, req 
 	if virtualInstanceID == "" {
 		log.Info("ConfigMap is missing or has empty virtualInstanceId in labels, skipping", "dataKey", liferayVirtualInstanceIdLabelKey)
 		// Consider emitting a Kubernetes event here to warn the user.
-		// r.Recorder.Eventf(cm, corev1.EventTypeWarning, "MissingLabel", "ConfigMap %s/%s is missing virtualInstanceId", cm.Namespace, cm.Name)
+		// r.Recorder.Eventf(cm, corev1.EventTypeWarning, "MissingLabel", "ConfigMap %s/%s is missing %", cm.Namespace, cm.Name, liferayVirtualInstanceIdLabelKey)
 		return ctrl.Result{}, nil // Do not requeue if data is malformed permanently.
 	}
 
