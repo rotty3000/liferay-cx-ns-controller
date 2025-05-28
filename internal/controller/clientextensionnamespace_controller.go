@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"reflect"
 
+	"github.com/liferay/liferay-portal/liferay-cx-ns-controller/internal/predicatelog"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -332,14 +333,14 @@ func (r *ClientExtensionNamespaceReconciler) desiredNamespaceLabels(virtualInsta
 }
 
 // SetupWithManager sets up the controller with the Manager.
-func (r *ClientExtensionNamespaceReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *ClientExtensionNamespaceReconciler) SetupWithManager(mgr ctrl.Manager, enablePredicateLogging bool) error {
 	// Predicate to filter events.
 	// It will allow events if the ConfigMap:
 	// 1. Is a Liferay Virtual Instance CM (has the liferayMetadataTypeLabelKey).
 	// 2. Is NOT a synced copy (does NOT have the syncedFromConfigMapLabelKey).
 
 	// Predicate to filter for ConfigMaps that are Liferay Virtual Instances.
-	eventFilter := predicate.Funcs{
+	var eventFilterPredicate predicate.Predicate = predicate.Funcs{
 		CreateFunc: func(e event.CreateEvent) bool {
 			cm, ok := e.Object.(*corev1.ConfigMap)
 			if !ok {
@@ -403,13 +404,20 @@ func (r *ClientExtensionNamespaceReconciler) SetupWithManager(mgr ctrl.Manager) 
 		},
 	}
 
+	if enablePredicateLogging {
+		eventFilterPredicate = &predicatelog.LoggingPredicate{
+			OriginalPredicate: eventFilterPredicate,
+			Logger:            logf.Log.WithValues("controller", controllerName),
+		}
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1.ConfigMap{}).
 		Owns(&corev1.Namespace{}). // Watch for Namespace events that this controller owns
 		// Also own the synced ConfigMaps. If a synced CM is deleted externally,
 		// this will trigger a reconcile of the source CM, which will then recreate the synced CM.
 		Owns(&corev1.ConfigMap{}).
-		WithEventFilter(eventFilter).
+		WithEventFilter(eventFilterPredicate).
 		Named(controllerName).
 		Complete(r)
 }

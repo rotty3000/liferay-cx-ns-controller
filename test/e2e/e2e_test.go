@@ -288,10 +288,10 @@ var _ = Describe("Manager", Ordered, func() {
 				controllerOutput, err := getLogs(controllerPodName, namespace)
 				g.Expect(err).NotTo(HaveOccurred())
 
-				_, _ = fmt.Fprintf(GinkgoWriter, "Controller logs:\n %s", controllerOutput)
+				// _, _ = fmt.Fprintf(GinkgoWriter, "Controller logs:\n %s", controllerOutput)
 
 				g.Expect(controllerOutput).To(ContainSubstring(
-					`controller_runtime_reconcile_total{controller="liferay-cx-ns-controller",result="ignored"}`,
+					`Predicate returned false, ignoring event	{"controller": "liferay-cx-ns-controller", "event_type": "CreateEvent", "gvk": "/, Kind=*v1.ConfigMap", "namespace": "liferay-cx-ns-controller-system", "name": "test-configmap"}`,
 				))
 			}
 			Eventually(check).Should(Succeed())
