@@ -260,6 +260,43 @@ var _ = Describe("Manager", Ordered, func() {
 		// +kubebuilder:scaffold:e2e-webhooks-checks
 
 	})
+
+	Context("Virtual Instance ConfigMap tracking", func() {
+		It("should ignore ConfigMaps without the type label", func() {
+			By("by creating a ConfigMap that does not have the proper type label and making sure the controller ignores it")
+
+			testConfigMap := &corev1.ConfigMap{
+				Data: map[string]string{
+					"test-key": "test-value",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-configmap",
+					Namespace: namespace,
+				},
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "v1",
+					Kind:       "ConfigMap",
+				},
+			}
+
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(utils.ToYAML(testConfigMap))
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create test ConfigMap", err)
+
+			check := func(g Gomega) {
+				controllerOutput, err := getLogs(controllerPodName, namespace)
+				g.Expect(err).NotTo(HaveOccurred())
+
+				_, _ = fmt.Fprintf(GinkgoWriter, "Controller logs:\n %s", controllerOutput)
+
+				g.Expect(controllerOutput).To(ContainSubstring(
+					`controller_runtime_reconcile_total{controller="liferay-cx-ns-controller",result="ignored"}`,
+				))
+			}
+			Eventually(check).Should(Succeed())
+		})
+	})
 })
 
 // serviceAccountToken returns a token for the specified service account in the given namespace.
