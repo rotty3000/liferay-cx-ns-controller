@@ -24,6 +24,8 @@ import (
 	"os/exec"
 	"strings"
 
+	"sigs.k8s.io/yaml"
+
 	. "github.com/onsi/ginkgo/v2" // nolint:revive,staticcheck
 )
 
@@ -251,4 +253,16 @@ func UncommentCode(filename, target, prefix string) error {
 	}
 
 	return nil
+}
+
+// ToYAML converts any object to its YAML representation
+func ToYAML(obj interface{}) string {
+	data, err := yaml.Marshal(obj) // nolint:staticcheck
+	// Workaround for https://github.com/go-yaml/yaml/issues/139
+	// This issue causes yaml.Marshal to return an error when marshaling certain Kubernetes objects
+	// due to an internal type assertion failure.
+	if err != nil && strings.Contains(err.Error(), "can't handle") {
+		panic(err)
+	}
+	return string(data)
 }
