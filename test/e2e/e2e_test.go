@@ -372,6 +372,8 @@ var _ = Describe("Manager", Ordered, func() {
 
 			check := func(g Gomega) {
 				// controllerOutput, _ := getLogs(controllerPodName, namespace)
+				// g.Expect(err).NotTo(HaveOccurred())
+
 				// _, _ = fmt.Fprintf(GinkgoWriter, "=======================================\nController logs:\n %s", controllerOutput)
 
 				cmd := exec.Command("kubectl", "get", "ns", "--selector", "dxp.lxc.liferay.com/virtualInstanceId="+virtualInstanceId,
