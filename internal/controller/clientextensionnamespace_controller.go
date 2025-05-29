@@ -345,9 +345,9 @@ func (r *ClientExtensionNamespaceReconciler) syncSourceConfigMapToNamespace(ctx 
 	if syncedCM.Labels == nil {
 		syncedCM.Labels = make(map[string]string)
 	}
-	if syncedCM.Labels[syncedFromConfigMapLabelKey] != sourceCM.Namespace+"/"+sourceCM.Name {
+	if syncedCM.Labels[syncedFromConfigMapLabelKey] != sourceCM.Namespace + "." + sourceCM.Name {
 		needsUpdate = true
-		syncedCM.Labels[syncedFromConfigMapLabelKey] = sourceCM.Namespace + "/" + sourceCM.Name
+		syncedCM.Labels[syncedFromConfigMapLabelKey] = sourceCM.Namespace + "." + sourceCM.Name
 	}
 	// Also ensure it's owned by the targetNamespace
 	if err := ctrl.SetControllerReference(targetNamespace, syncedCM, r.Scheme); err != nil {
@@ -379,7 +379,7 @@ func (r *ClientExtensionNamespaceReconciler) newSyncedConfigMap(sourceCM *corev1
 	// or conflict with the target namespace's own management.
 	// For now, we'll start with minimal labels and the synced-from indicator.
 	labelsToSync := make(map[string]string)
-	labelsToSync[syncedFromConfigMapLabelKey] = sourceCM.Namespace + "/" + sourceCM.Name
+	labelsToSync[syncedFromConfigMapLabelKey] = sourceCM.Namespace + "." + sourceCM.Name
 	// Add other labels from sourceCM if they are safe and desired.
 	// For example, the virtualInstanceIdLabelKey itself.
 	if vid := getVirtualInstanceIdLabel(sourceCM); vid != "" {
