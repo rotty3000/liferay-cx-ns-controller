@@ -371,16 +371,19 @@ var _ = Describe("Manager", Ordered, func() {
 			Expect(err).NotTo(HaveOccurred(), "Failed to create test ConfigMap", err)
 
 			check := func(g Gomega) {
-				controllerOutput, _ := getLogs(controllerPodName, namespace)
-				_, _ = fmt.Fprintf(GinkgoWriter, "=======================================\nController logs:\n %s", controllerOutput)
+				// controllerOutput, _ := getLogs(controllerPodName, namespace)
+				// _, _ = fmt.Fprintf(GinkgoWriter, "=======================================\nController logs:\n %s", controllerOutput)
 
-				cmd := exec.Command("kubectl", "get", "ns", "--selector", "lxc.liferay.com/virtualInstanceId="+virtualInstanceId,
+				cmd := exec.Command("kubectl", "get", "ns", "--selector", "dxp.lxc.liferay.com/virtualInstanceId="+virtualInstanceId,
 					"-o", "jsonpath={.items[0].metadata.name}")
 				output, err := tutils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(output).To(Equal(expectedNamespaceName), "namespace wrong name")
 			}
 			Eventually(check).Should(Succeed())
+			cmd = exec.Command("kubectl", "delete", "cm", cmName, "-n", namespace, "--wait", "--timeout", "5m")
+			_, err = tutils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to delete ConfigMap", err)
 		})
 	})
 })

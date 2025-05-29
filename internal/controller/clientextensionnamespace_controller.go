@@ -45,6 +45,7 @@ const (
 	applicationAlias                 = "default" // Default application alias for the namespace
 	syncedFromConfigMapLabelKey      = "cx.liferay.com/synced-from-configmap"
 	managedByLabelKey                = "app.kubernetes.io/managed-by"
+	managedByResourceLabelKey        = "app.kubernetes.io/managed-by-resource"
 	namespaceFinalizer               = "cx.liferay.com/namespace-protection"
 	controllerName                   = "liferay-cx-ns-controller"
 )
@@ -123,7 +124,7 @@ func (r *ClientExtensionNamespaceReconciler) Reconcile(ctx context.Context, req 
 		if controllerutil.ContainsFinalizer(sourceCM, namespaceFinalizer) {
 			log.Info("ConfigMap is being deleted, performing cleanup of associated Namespaces")
 
-			if err := r.cleanupAssociatedNamespaces(ctx, virtualInstanceID, log); err != nil {
+			if err := r.cleanupAssociatedNamespaces(ctx, sourceCM, virtualInstanceID, log); err != nil {
 				log.Error(err, "Failed to cleanup associated Namespaces during ConfigMap deletion")
 				return ctrl.Result{}, err // Requeue to retry cleanup
 			}
@@ -188,7 +189,7 @@ func (r *ClientExtensionNamespaceReconciler) Reconcile(ctx context.Context, req 
 		if nsToUpdate.Labels == nil {
 			nsToUpdate.Labels = make(map[string]string)
 		}
-		desiredStdLabels := r.desiredNamespaceLabels(virtualInstanceID)
+		desiredStdLabels := r.desiredNamespaceLabels(sourceCM, virtualInstanceID)
 		for k, v := range desiredStdLabels {
 			nsToUpdate.Labels[k] = v
 		}
@@ -225,10 +226,10 @@ func (r *ClientExtensionNamespaceReconciler) Reconcile(ctx context.Context, req 
 
 	// If the default namespace was not found among the labeled namespaces, create it.
 	if !defaultNamespaceFound {
-		log.Info("Default target namespace not found, creating new one.", "namespaceName", defaultNamespaceName)
-		ns := r.newNamespaceForConfigMap(defaultNamespaceName, virtualInstanceID)
+		log.Info("Default target namespace not found, creating new one.")
+		ns := r.newNamespaceForConfigMap(sourceCM, defaultNamespaceName, virtualInstanceID)
 		// DO NOT set OwnerReference from sourceCM to ns
-		log.Info("Creating default Namespace", "namespace", ns.Name)
+		log.Info("Creating default Namespace")
 		if err := r.Create(ctx, ns); err != nil {
 			if apierrors.IsAlreadyExists(err) {
 				// This can happen if another reconcile loop or process created it just now.
@@ -238,7 +239,7 @@ func (r *ClientExtensionNamespaceReconciler) Reconcile(ctx context.Context, req 
 			log.Error(err, "Failed to create default Namespace")
 			return ctrl.Result{}, err
 		}
-		log.Info("Successfully created default Namespace")
+		log.Info("Successfully created default Namespace", "createdNamespace", ns.Name)
 		// After creating the default namespace, sync the sourceCM to it as well.
 		// We need to fetch the newly created namespace object to set owner reference correctly for the synced CM.
 		createdNs := &corev1.Namespace{}
@@ -256,13 +257,14 @@ func (r *ClientExtensionNamespaceReconciler) Reconcile(ctx context.Context, req 
 }
 
 // cleanupAssociatedNamespaces deletes all namespaces managed by this controller for a given virtualInstanceID.
-func (r *ClientExtensionNamespaceReconciler) cleanupAssociatedNamespaces(ctx context.Context, virtualInstanceID string, log logr.Logger) error {
+func (r *ClientExtensionNamespaceReconciler) cleanupAssociatedNamespaces(ctx context.Context, cm *corev1.ConfigMap, virtualInstanceID string, log logr.Logger) error {
 	log.Info("Listing namespaces for cleanup", "virtualInstanceID", virtualInstanceID)
 	namespaceList := &corev1.NamespaceList{}
 	listOpts := []client.ListOption{
 		client.MatchingLabels{
 			liferayVirtualInstanceIdLabelKey: virtualInstanceID,
 			managedByLabelKey:                controllerName,
+			managedByResourceLabelKey:        cm.Namespace + "." + cm.Name,
 		},
 	}
 
@@ -345,7 +347,7 @@ func (r *ClientExtensionNamespaceReconciler) syncSourceConfigMapToNamespace(ctx 
 	if syncedCM.Labels == nil {
 		syncedCM.Labels = make(map[string]string)
 	}
-	if syncedCM.Labels[syncedFromConfigMapLabelKey] != sourceCM.Namespace + "." + sourceCM.Name {
+	if syncedCM.Labels[syncedFromConfigMapLabelKey] != (sourceCM.Namespace + "." + sourceCM.Name) {
 		needsUpdate = true
 		syncedCM.Labels[syncedFromConfigMapLabelKey] = sourceCM.Namespace + "." + sourceCM.Name
 	}
@@ -398,20 +400,21 @@ func (r *ClientExtensionNamespaceReconciler) newSyncedConfigMap(sourceCM *corev1
 }
 
 // newNamespaceForConfigMap constructs a new Namespace object.
-func (r *ClientExtensionNamespaceReconciler) newNamespaceForConfigMap(name, virtualInstanceID string) *corev1.Namespace {
+func (r *ClientExtensionNamespaceReconciler) newNamespaceForConfigMap(cm *corev1.ConfigMap, name, virtualInstanceID string) *corev1.Namespace {
 	return &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   name,
-			Labels: r.desiredNamespaceLabels(virtualInstanceID),
+			Labels: r.desiredNamespaceLabels(cm, virtualInstanceID),
 		},
 	}
 }
 
 // desiredNamespaceLabels returns the set of labels that should be on the namespace.
-func (r *ClientExtensionNamespaceReconciler) desiredNamespaceLabels(virtualInstanceID string) map[string]string {
+func (r *ClientExtensionNamespaceReconciler) desiredNamespaceLabels(cm *corev1.ConfigMap, virtualInstanceID string) map[string]string {
 	return map[string]string{
 		liferayVirtualInstanceIdLabelKey: virtualInstanceID,
 		managedByLabelKey:                controllerName,
+		managedByResourceLabelKey:        cm.Namespace + "." + cm.Name,
 	}
 }
 
