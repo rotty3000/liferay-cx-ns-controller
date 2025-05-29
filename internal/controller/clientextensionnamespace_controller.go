@@ -18,10 +18,10 @@ package controller
 
 import (
 	"context"
-	"fmt"
 	"reflect"
 
 	"github.com/liferay/liferay-portal/liferay-cx-ns-controller/internal/predicatelog"
+	"github.com/liferay/liferay-portal/liferay-cx-ns-controller/internal/utils"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -40,7 +40,7 @@ const (
 	liferayMetadataTypeLabelValue = "dxp"
 	// liferayVirtualInstanceIdLabelKey is the key in ConfigMap.Data that holds the Virtual Instance ID.
 	liferayVirtualInstanceIdLabelKey = "dxp.lxc.liferay.com/virtualInstanceId"
-	applicationAlias                 = "cx" // Default application alias for the namespace
+	applicationAlias                 = "default" // Default application alias for the namespace
 	syncedFromConfigMapLabelKey      = "lxc.liferay.com/synced-from-configmap"
 	managedByLabelKey                = "app.kubernetes.io/managed-by"
 	controllerName                   = "liferay-cx-ns-controller"
@@ -103,7 +103,12 @@ func (r *ClientExtensionNamespaceReconciler) Reconcile(ctx context.Context, req 
 	log = log.WithValues("virtualInstanceID", virtualInstanceID)
 
 	// 4. Construct the desired Namespace name
-	defaultNamespaceName := fmt.Sprintf("%s-%s", virtualInstanceID, applicationAlias)
+	defaultNamespaceName, err := utils.VirtuaInstanceIdToNamespace(virtualInstanceID, applicationAlias)
+	if err != nil {
+		log.Error(err, "Failed to construct desired Namespace name", "virtualInstanceID", virtualInstanceID, "applicationAlias", applicationAlias, "namespaceName", defaultNamespaceName)
+		return ctrl.Result{}, err
+	}
+
 	log = log.WithValues("defaultTargetNamespace", defaultNamespaceName)
 
 	// 5. List all Namespaces associated with this Virtual Instance ID
