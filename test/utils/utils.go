@@ -19,7 +19,9 @@ package utils
 import (
 	"bufio"
 	"bytes"
+	"crypto/rand"
 	"fmt"
+	"math/big"
 	"os"
 	"os/exec"
 	"strings"
@@ -36,6 +38,15 @@ const (
 
 	certmanagerVersion = "v1.16.3"
 	certmanagerURLTmpl = "https://github.com/cert-manager/cert-manager/releases/download/%s/cert-manager.yaml"
+
+	// Max K8s namespace length
+	maxNameLength = 20
+	// Prefix for the random name
+	namePrefix = "cm-"
+	// Character set for random part of the name (lowercase alphanumeric)
+	randomCharSet = "abcdefghijklmnopqrstuvwxyz0123456789"
+	// Length of the random suffix
+	randomSuffixLength = 8
 )
 
 func warnError(err error) {
@@ -265,4 +276,45 @@ func ToYAML(obj interface{}) string {
 		panic(err)
 	}
 	return string(data)
+}
+
+// GenerateRandomConfigMapName generates a random, valid name for a ConfigMap.
+// It aims to comply with Kubernetes naming conventions:
+// - Max 253 characters
+// - Lowercase alphanumeric, '-', '.'
+// - Starts and ends with alphanumeric
+func GenerateRandomConfigMapName() string {
+	// Ensure prefix doesn't make the name too long initially
+	if len(namePrefix)+randomSuffixLength > maxNameLength {
+		panic(fmt.Errorf("prefix and random suffix length exceed maximum name length"))
+	}
+
+	var sb strings.Builder
+	sb.WriteString(namePrefix)
+
+	for i := 0; i < randomSuffixLength; i++ {
+		num, err := rand.Int(rand.Reader, big.NewInt(int64(len(randomCharSet))))
+		if err != nil {
+			panic(fmt.Errorf("failed to generate random character index: %w", err))
+		}
+		sb.WriteByte(randomCharSet[num.Int64()])
+	}
+
+	name := sb.String()
+
+	// Basic validation (though the construction should ensure this)
+	if len(name) > maxNameLength {
+		// This should not happen with current constants but good to have
+		panic(fmt.Errorf("generated name exceeds max length of %d", maxNameLength))
+	}
+	if !isAlphanumeric(name[0]) || !isAlphanumeric(name[len(name)-1]) {
+		// This also should not happen with current construction
+		panic(fmt.Errorf("generated name must start and end with an alphanumeric character"))
+	}
+
+	return name
+}
+
+func isAlphanumeric(char byte) bool {
+	return (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9')
 }
