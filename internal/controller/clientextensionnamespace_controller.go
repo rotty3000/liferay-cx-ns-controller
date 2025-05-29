@@ -182,9 +182,6 @@ func (r *ClientExtensionNamespaceReconciler) Reconcile(ctx context.Context, req 
 			}
 		}
 
-		// Remove OwnerReference to the source ConfigMap if it exists (migration)
-		ownerRefRemoved := r.removeCmOwnerReference(nsToUpdate, sourceCM)
-
 		// Ensure standard labels are present and correct (preserve other existing labels)
 		if nsToUpdate.Labels == nil {
 			nsToUpdate.Labels = make(map[string]string)
@@ -197,10 +194,7 @@ func (r *ClientExtensionNamespaceReconciler) Reconcile(ctx context.Context, req 
 		// Check if an update to the Namespace object is actually needed
 		labelsChanged := !reflect.DeepEqual(originalLabels, nsToUpdate.Labels)
 
-		if ownerRefRemoved || labelsChanged {
-			if ownerRefRemoved {
-				logForNs.Info("Updating existing Namespace: removed OwnerReference to source ConfigMap.")
-			}
+		if labelsChanged {
 			if labelsChanged {
 				logForNs.Info("Updating existing Namespace: labels changed.")
 			}
@@ -210,7 +204,7 @@ func (r *ClientExtensionNamespaceReconciler) Reconcile(ctx context.Context, req 
 			}
 			logForNs.Info("Successfully updated existing Namespace")
 		} else {
-			logForNs.Info("Existing Namespace is already in the desired state regarding labels and owner references.")
+			logForNs.Info("Existing Namespace is already in the desired state regarding labels.")
 		}
 
 		if nsToUpdate.Name == defaultNamespaceName {
@@ -471,9 +465,6 @@ func (r *ClientExtensionNamespaceReconciler) SetupWithManager(mgr ctrl.Manager, 
 			return false
 		},
 		DeleteFunc: func(e event.DeleteEvent) bool {
-			// When a ConfigMap is deleted, owner references handle Namespace cleanup.
-			// Reconciling on delete of the CM itself is useful if we had finalizers on the CM.
-			// For this controller, the OwnerReference on Namespace handles deletion of Namespace.
 			// We return true to allow the reconcile loop to see the CM is gone.
 			cm, ok := e.Object.(*corev1.ConfigMap)
 			if !ok {
@@ -530,31 +521,4 @@ func isSyncedConfigMap(cm *corev1.ConfigMap) bool {
 	}
 	_, ok := cm.Labels[syncedFromConfigMapLabelKey]
 	return ok
-}
-
-// removeCmOwnerReference removes an OwnerReference pointing to the given ConfigMap from the Namespace.
-// Returns true if an owner reference was removed.
-func (r *ClientExtensionNamespaceReconciler) removeCmOwnerReference(ns *corev1.Namespace, cmOwner *corev1.ConfigMap) bool {
-	if ns == nil || cmOwner == nil {
-		return false
-	}
-	var newOwnerReferences []metav1.OwnerReference
-	removed := false
-	// Correctly get GVK for ConfigMap
-	ownerGVK := corev1.SchemeGroupVersion.WithKind("ConfigMap")
-
-	for _, ref := range ns.GetOwnerReferences() {
-		if ref.APIVersion == ownerGVK.GroupVersion().String() &&
-			ref.Kind == ownerGVK.Kind &&
-			ref.Name == cmOwner.GetName() &&
-			ref.UID == cmOwner.GetUID() {
-			removed = true
-		} else {
-			newOwnerReferences = append(newOwnerReferences, ref)
-		}
-	}
-	if removed {
-		ns.SetOwnerReferences(newOwnerReferences)
-	}
-	return removed
 }
