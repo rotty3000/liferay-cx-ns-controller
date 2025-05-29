@@ -405,11 +405,18 @@ func (r *ClientExtensionNamespaceReconciler) newNamespaceForConfigMap(cm *corev1
 
 // desiredNamespaceLabels returns the set of labels that should be on the namespace.
 func (r *ClientExtensionNamespaceReconciler) desiredNamespaceLabels(cm *corev1.ConfigMap, virtualInstanceID string) map[string]string {
-	return map[string]string{
-		liferayVirtualInstanceIdLabelKey: virtualInstanceID,
-		managedByLabelKey:                controllerName,
-		managedByResourceLabelKey:        cm.Namespace + "." + cm.Name,
+	newLabels := make(map[string]string)
+	if cm.Labels != nil {
+		for k, v := range cm.Labels {
+			newLabels[k] = v
+		}
 	}
+
+	newLabels[liferayVirtualInstanceIdLabelKey] = virtualInstanceID
+	newLabels[managedByLabelKey] = controllerName
+	newLabels[managedByResourceLabelKey] = cm.Namespace + "." + cm.Name
+
+	return newLabels
 }
 
 // SetupWithManager sets up the controller with the Manager.
