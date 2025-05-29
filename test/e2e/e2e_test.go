@@ -102,7 +102,7 @@ var _ = Describe("Manager", Ordered, func() {
 		specReport := CurrentSpecReport()
 		if specReport.Failed() {
 			By("Fetching controller manager pod logs")
-			controllerLogs, err := getLogs(controllerPodName, namespace)
+			controllerLogs, err := tutils.GetLogs(controllerPodName, namespace)
 			if err == nil {
 				_, _ = fmt.Fprintf(GinkgoWriter, "Controller logs:\n %s", controllerLogs)
 			} else {
@@ -119,7 +119,7 @@ var _ = Describe("Manager", Ordered, func() {
 			}
 
 			By("Fetching curl-metrics logs")
-			metricsOutput, err := getLogs("curl-metrics", namespace)
+			metricsOutput, err := tutils.GetLogs("curl-metrics", namespace)
 			if err == nil {
 				_, _ = fmt.Fprintf(GinkgoWriter, "Metrics logs:\n %s", metricsOutput)
 			} else {
@@ -203,7 +203,7 @@ var _ = Describe("Manager", Ordered, func() {
 
 			By("verifying that the controller manager is serving the metrics server")
 			verifyMetricsServerStarted := func(g Gomega) {
-				output, err := getLogs(controllerPodName, namespace)
+				output, err := tutils.GetLogs(controllerPodName, namespace)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(output).To(ContainSubstring("controller-runtime.metrics\tServing metrics server"),
 					"Metrics server not yet started")
@@ -288,7 +288,7 @@ var _ = Describe("Manager", Ordered, func() {
 			Expect(err).NotTo(HaveOccurred(), "Failed to create test ConfigMap", err)
 
 			check := func(g Gomega) {
-				controllerOutput, err := getLogs(controllerPodName, namespace)
+				controllerOutput, err := tutils.GetLogs(controllerPodName, namespace)
 				g.Expect(err).NotTo(HaveOccurred())
 
 				// _, _ = fmt.Fprintf(GinkgoWriter, "Controller logs:\n %s", controllerOutput)
@@ -328,7 +328,7 @@ var _ = Describe("Manager", Ordered, func() {
 			Expect(err).NotTo(HaveOccurred(), "Failed to create test ConfigMap", err)
 
 			check := func(g Gomega) {
-				controllerOutput, err := getLogs(controllerPodName, namespace)
+				controllerOutput, err := tutils.GetLogs(controllerPodName, namespace)
 				g.Expect(err).NotTo(HaveOccurred())
 
 				// _, _ = fmt.Fprintf(GinkgoWriter, "Controller logs:\n %s", controllerOutput)
@@ -431,19 +431,10 @@ func serviceAccountToken() (string, error) {
 	return out, err
 }
 
-func getLogs(podName string, namespace string) (string, error) {
-	cmd := exec.Command("kubectl", "logs", podName, "-n", namespace)
-	controllerLogs, err := tutils.Run(cmd)
-	if err == nil {
-		return controllerLogs, nil
-	}
-	return "", err
-}
-
 // getMetricsOutput retrieves and returns the logs from the curl pod used to access the metrics endpoint.
 func getMetricsOutput() string {
 	By("getting the curl-metrics logs")
-	metricsOutput, err := getLogs("curl-metrics", namespace)
+	metricsOutput, err := tutils.GetLogs("curl-metrics", namespace)
 	Expect(err).NotTo(HaveOccurred(), "Failed to retrieve logs from curl pod")
 	Expect(metricsOutput).To(ContainSubstring("< HTTP/1.1 200 OK"))
 	return metricsOutput

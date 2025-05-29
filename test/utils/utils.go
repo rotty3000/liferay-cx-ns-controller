@@ -318,3 +318,12 @@ func GenerateRandomConfigMapName() string {
 func isAlphanumeric(char byte) bool {
 	return (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9')
 }
+
+func GetLogs(podName string, namespace string) (string, error) {
+	cmd := exec.Command("kubectl", "logs", podName, "-n", namespace)
+	controllerLogs, err := Run(cmd)
+	if err == nil {
+		return controllerLogs, nil
+	}
+	return "", err
+}
