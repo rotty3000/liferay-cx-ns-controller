@@ -313,7 +313,7 @@ var _ = Describe("Manager", Ordered, func() {
 					Name:      cmName,
 					Namespace: namespace,
 					Labels: map[string]string{
-						"lxc.liferay.com/synced-from-configmap": "true",
+						"lxc.liferay.com/synced-from-configmap": "foo",
 					},
 				},
 				TypeMeta: metav1.TypeMeta{

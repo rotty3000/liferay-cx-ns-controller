@@ -41,13 +41,15 @@ const (
 	// liferayMetadataTypeLabelValue is the expected value for the liferayVirtualInstanceLabelKey.
 	liferayMetadataTypeLabelValue = "dxp"
 	// liferayVirtualInstanceIdLabelKey is the key in ConfigMap.Data that holds the Virtual Instance ID.
-	liferayVirtualInstanceIdLabelKey = "dxp.lxc.liferay.com/virtualInstanceId"
-	applicationAlias                 = "default" // Default application alias for the namespace
-	syncedFromConfigMapLabelKey      = "cx.liferay.com/synced-from-configmap"
-	managedByLabelKey                = "app.kubernetes.io/managed-by"
-	managedByResourceLabelKey        = "app.kubernetes.io/managed-by-resource"
-	namespaceFinalizer               = "cx.liferay.com/namespace-protection"
-	controllerName                   = "liferay-cx-ns-controller"
+	liferayVirtualInstanceIdLabelKey     = "dxp.lxc.liferay.com/virtualInstanceId"
+	applicationAlias                     = "default" // Default application alias for the namespace
+	syncedFromConfigMapLabelKey          = "cx.liferay.com/synced-from-configmap"
+	syncedFromConfigMapNamespaceLabelKey = "cx.liferay.com/synced-from-configmap-namespace"
+	managedByLabelKey                    = "app.kubernetes.io/managed-by"
+	managedByResourceLabelKey            = "app.kubernetes.io/managed-by-resource"
+	managedByResourceNamespaceLabelKey   = "app.kubernetes.io/managed-by-resource-namespace"
+	namespaceFinalizer                   = "cx.liferay.com/namespace-protection"
+	controllerName                       = "liferay-cx-ns-controller"
 )
 
 // ClientExtensionNamespaceReconciler reconciles a ConfigMap object
@@ -256,9 +258,10 @@ func (r *ClientExtensionNamespaceReconciler) cleanupAssociatedNamespaces(ctx con
 	namespaceList := &corev1.NamespaceList{}
 	listOpts := []client.ListOption{
 		client.MatchingLabels{
-			liferayVirtualInstanceIdLabelKey: virtualInstanceID,
-			managedByLabelKey:                controllerName,
-			managedByResourceLabelKey:        cm.Namespace + "." + cm.Name,
+			liferayVirtualInstanceIdLabelKey:   virtualInstanceID,
+			managedByLabelKey:                  controllerName,
+			managedByResourceLabelKey:          cm.Name,
+			managedByResourceNamespaceLabelKey: cm.Namespace,
 		},
 	}
 
@@ -341,9 +344,13 @@ func (r *ClientExtensionNamespaceReconciler) syncSourceConfigMapToNamespace(ctx 
 	if syncedCM.Labels == nil {
 		syncedCM.Labels = make(map[string]string)
 	}
-	if syncedCM.Labels[syncedFromConfigMapLabelKey] != (sourceCM.Namespace + "." + sourceCM.Name) {
+	if syncedCM.Labels[syncedFromConfigMapLabelKey] != sourceCM.Name {
 		needsUpdate = true
-		syncedCM.Labels[syncedFromConfigMapLabelKey] = sourceCM.Namespace + "." + sourceCM.Name
+		syncedCM.Labels[syncedFromConfigMapLabelKey] = sourceCM.Name
+	}
+	if syncedCM.Labels[syncedFromConfigMapNamespaceLabelKey] != sourceCM.Namespace {
+		needsUpdate = true
+		syncedCM.Labels[syncedFromConfigMapNamespaceLabelKey] = sourceCM.Namespace
 	}
 	// Also ensure it's owned by the targetNamespace
 	if err := ctrl.SetControllerReference(targetNamespace, syncedCM, r.Scheme); err != nil {
@@ -375,7 +382,9 @@ func (r *ClientExtensionNamespaceReconciler) newSyncedConfigMap(sourceCM *corev1
 	// or conflict with the target namespace's own management.
 	// For now, we'll start with minimal labels and the synced-from indicator.
 	labelsToSync := make(map[string]string)
-	labelsToSync[syncedFromConfigMapLabelKey] = sourceCM.Namespace + "." + sourceCM.Name
+	labelsToSync[syncedFromConfigMapLabelKey] = sourceCM.Name
+	labelsToSync[syncedFromConfigMapNamespaceLabelKey] = sourceCM.Namespace
+
 	// Add other labels from sourceCM if they are safe and desired.
 	// For example, the virtualInstanceIdLabelKey itself.
 	if vid := getVirtualInstanceIdLabel(sourceCM); vid != "" {
@@ -394,27 +403,28 @@ func (r *ClientExtensionNamespaceReconciler) newSyncedConfigMap(sourceCM *corev1
 }
 
 // newNamespaceForConfigMap constructs a new Namespace object.
-func (r *ClientExtensionNamespaceReconciler) newNamespaceForConfigMap(cm *corev1.ConfigMap, name, virtualInstanceID string) *corev1.Namespace {
+func (r *ClientExtensionNamespaceReconciler) newNamespaceForConfigMap(sourceCM *corev1.ConfigMap, name, virtualInstanceID string) *corev1.Namespace {
 	return &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   name,
-			Labels: r.desiredNamespaceLabels(cm, virtualInstanceID),
+			Labels: r.desiredNamespaceLabels(sourceCM, virtualInstanceID),
 		},
 	}
 }
 
 // desiredNamespaceLabels returns the set of labels that should be on the namespace.
-func (r *ClientExtensionNamespaceReconciler) desiredNamespaceLabels(cm *corev1.ConfigMap, virtualInstanceID string) map[string]string {
+func (r *ClientExtensionNamespaceReconciler) desiredNamespaceLabels(sourceCM *corev1.ConfigMap, virtualInstanceID string) map[string]string {
 	newLabels := make(map[string]string)
-	if cm.Labels != nil {
-		for k, v := range cm.Labels {
+	if sourceCM.Labels != nil {
+		for k, v := range sourceCM.Labels {
 			newLabels[k] = v
 		}
 	}
 
 	newLabels[liferayVirtualInstanceIdLabelKey] = virtualInstanceID
 	newLabels[managedByLabelKey] = controllerName
-	newLabels[managedByResourceLabelKey] = cm.Namespace + "." + cm.Name
+	newLabels[managedByResourceLabelKey] = sourceCM.Name
+	newLabels[managedByResourceNamespaceLabelKey] = sourceCM.Namespace
 
 	return newLabels
 }
