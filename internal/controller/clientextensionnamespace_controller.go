@@ -498,10 +498,12 @@ func (r *ClientExtensionNamespaceReconciler) SetupWithManager(mgr ctrl.Manager, 
 		},
 	}
 
+	// Use the manager's logger for the predicate logging
+	predicateLogger := mgr.GetLogger().WithValues("predicate_controller", controllerName)
 	if enablePredicateLogging {
 		eventFilterPredicate = &predicatelog.LoggingPredicate{
 			OriginalPredicate: eventFilterPredicate,
-			Logger:            logf.Log.WithValues("controller", controllerName),
+			Logger:            predicateLogger,
 		}
 	}
 
