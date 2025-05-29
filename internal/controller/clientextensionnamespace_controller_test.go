@@ -131,6 +131,19 @@ var _ = Describe("ConfigMap Controller", func() {
 				g.Expect(ns.Items[0].Name).To(Equal(expectedNamespaceName))
 			}
 			Eventually(check).Should(Succeed())
+
+			Expect(k8sClient.Delete(ctx, testConfigMap, &client.DeleteOptions{})).To(Succeed())
+
+			check = func(g Gomega) {
+				ns := &corev1.NamespaceList{}
+				labelSelector := client.MatchingLabels{
+					"dxp.lxc.liferay.com/virtualInstanceId": virtualInstanceId,
+				}
+				err := k8sClient.List(ctx, ns, labelSelector)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(ns.Items).To(ContainElement(HaveField("DeletionTimestamp", Not(BeNil()))))
+			}
+			Eventually(check).Should(Succeed())
 		})
 	})
 })
