@@ -11,7 +11,7 @@ import (
 
 var regex = regexp.MustCompile("^[a-zA-Z0-9]+$")
 
-func VirtuaInstanceIdToNamespace(virtualInstanceID string, applicationAlias string) (string, error) {
+func VirtualInstanceIdToNamespace(originNamespace string, virtualInstanceID string, applicationAlias string) (string, error) {
 	if len(applicationAlias) > 16 {
 		return "", fmt.Errorf("invalid applicationAlias: %s, length is greater than 16", applicationAlias)
 	}
@@ -20,25 +20,27 @@ func VirtuaInstanceIdToNamespace(virtualInstanceID string, applicationAlias stri
 		return "", fmt.Errorf("invalid applicationAlias: %s, must only contain alphanumeric characters", applicationAlias)
 	}
 
-	return fmt.Sprintf("cx-%s-%s", applicationAlias, VirtuaInstanceIdToNamespaceSegment(virtualInstanceID, len(applicationAlias))), nil
-}
-
-func VirtuaInstanceIdToNamespaceSegment(virtualInstanceID string, suffixLength int) string {
 	virtualInstanceID = strings.ReplaceAll(virtualInstanceID, ".", "")
 
-	allowedLength := 63 - 4 - suffixLength
-	if len(virtualInstanceID) > allowedLength {
-		prefix := virtualInstanceID[0:(allowedLength - 16 - 2)]
-		virtualInstanceID = prefix + "--" + Xxhash3(virtualInstanceID)
+	lengthOfApplicationAlias := len(applicationAlias)
+	originNamespaceHash := Xxhash3(originNamespace)
+	virtualInstanceIDHash := Xxhash3(virtualInstanceID)
+
+	if len(originNamespace) > (63 - 5 - lengthOfApplicationAlias) {
+		originNamespace = originNamespace[:20] + originNamespaceHash
 	}
 
-	return virtualInstanceID
+	if len(virtualInstanceID) > (63 - 5 - lengthOfApplicationAlias - len(originNamespace)) {
+		virtualInstanceID = virtualInstanceID[:(63-5-lengthOfApplicationAlias-len(originNamespace)-4)] + virtualInstanceIDHash
+	}
+
+	return fmt.Sprintf("cx-%s-%s-%s", originNamespace, applicationAlias, virtualInstanceID), nil
 }
 
 func Xxhash3(data string) string {
 	if data == "" {
-		return "0000000000000000"
+		return "0000"
 	}
 
-	return fmt.Sprintf("%016s", strconv.FormatUint(xxh3.HashString(data), 10)[0:16])
+	return fmt.Sprintf("%04s", strconv.FormatUint(xxh3.HashString(data), 10)[0:4])
 }

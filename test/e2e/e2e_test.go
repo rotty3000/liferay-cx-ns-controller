@@ -345,7 +345,7 @@ var _ = Describe("Manager", Ordered, func() {
 
 			cmName := tutils.GenerateRandomConfigMapName()
 			virtualInstanceId := tutils.GenerateRandomConfigMapName()
-			expectedNamespaceName, _ := utils.VirtuaInstanceIdToNamespace(virtualInstanceId, "default")
+			expectedNamespaceName, _ := utils.VirtualInstanceIdToNamespace(namespace, virtualInstanceId, "default")
 
 			testConfigMap := &corev1.ConfigMap{
 				Data: map[string]string{

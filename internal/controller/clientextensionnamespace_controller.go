@@ -152,7 +152,7 @@ func (r *ClientExtensionNamespaceReconciler) Reconcile(ctx context.Context, req 
 	}
 
 	// Construct the desired Namespace name
-	defaultNamespaceName, err := utils.VirtuaInstanceIdToNamespace(virtualInstanceID, applicationAlias)
+	defaultNamespaceName, err := utils.VirtualInstanceIdToNamespace(sourceCM.Namespace, virtualInstanceID, applicationAlias)
 	if err != nil {
 		log.Error(err, "Failed to construct desired Namespace name", "virtualInstanceID", virtualInstanceID, "applicationAlias", applicationAlias, "namespaceName", defaultNamespaceName)
 		return ctrl.Result{}, err
