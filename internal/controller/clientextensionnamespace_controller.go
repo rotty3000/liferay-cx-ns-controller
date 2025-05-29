@@ -20,14 +20,16 @@ import (
 	"context"
 	"reflect"
 
+	"github.com/go-logr/logr"
 	"github.com/liferay/liferay-portal/liferay-cx-ns-controller/internal/predicatelog"
 	"github.com/liferay/liferay-portal/liferay-cx-ns-controller/internal/utils"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
@@ -41,8 +43,9 @@ const (
 	// liferayVirtualInstanceIdLabelKey is the key in ConfigMap.Data that holds the Virtual Instance ID.
 	liferayVirtualInstanceIdLabelKey = "dxp.lxc.liferay.com/virtualInstanceId"
 	applicationAlias                 = "default" // Default application alias for the namespace
-	syncedFromConfigMapLabelKey      = "lxc.liferay.com/synced-from-configmap"
+	syncedFromConfigMapLabelKey      = "cx.liferay.com/synced-from-configmap"
 	managedByLabelKey                = "app.kubernetes.io/managed-by"
+	namespaceFinalizer               = "cx.liferay.com/namespace-protection"
 	controllerName                   = "liferay-cx-ns-controller"
 )
 
@@ -65,11 +68,10 @@ type ClientExtensionNamespaceReconciler struct {
 func (r *ClientExtensionNamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx).WithValues("configmap", req.NamespacedName)
 
-	// 1. Fetch the source ConfigMap instance
 	sourceCM := &corev1.ConfigMap{}
 	if err := r.Get(ctx, req.NamespacedName, sourceCM); err != nil {
-		if errors.IsNotFound(err) {
-			// ConfigMap not found, likely deleted. Owned namespaces will be garbage collected by Kubernetes.
+		if apierrors.IsNotFound(err) {
+			// ConfigMap not found, likely deleted.
 			log.Info("ConfigMap not found. Ignoring since object must be deleted.")
 			return ctrl.Result{}, nil
 		}
@@ -78,40 +80,85 @@ func (r *ClientExtensionNamespaceReconciler) Reconcile(ctx context.Context, req 
 		return ctrl.Result{}, err
 	}
 
-	// 0. Check if this ConfigMap is a synced copy. If so, ignore it.
-	if _, ok := sourceCM.Labels[syncedFromConfigMapLabelKey]; ok {
+	// Check if this ConfigMap is a synced copy. If so, ignore it.
+	if isSyncedConfigMap(sourceCM) {
 		log.Info("ConfigMap is a synced copy, skipping", "configMapName", sourceCM.Name, "namespace", sourceCM.Namespace)
 		return ctrl.Result{}, nil
 	}
 
-	// 2. Check if this ConfigMap is a Liferay Virtual Instance ConfigMap
-	// This check is also performed by the predicate, but it's good for defensive programming.
+	// Check if this ConfigMap is a Liferay Virtual Instance ConfigMap
 	if !isLiferayVirtualInstanceCM(sourceCM) {
-		// log.V(1).Info("ConfigMap is not a Liferay Virtual Instance ConfigMap, skipping.") // Use V(1) for debug level
+		log.V(1).Info("ConfigMap is not a Liferay Virtual Instance ConfigMap.")
+		// If it's not a VI CM but has our finalizer (and not being deleted), remove the finalizer.
+		if sourceCM.ObjectMeta.DeletionTimestamp.IsZero() && controllerutil.ContainsFinalizer(sourceCM, namespaceFinalizer) {
+			log.Info("Removing finalizer from ConfigMap that is no longer a Liferay VI CM.")
+			controllerutil.RemoveFinalizer(sourceCM, namespaceFinalizer)
+			if err := r.Update(ctx, sourceCM); err != nil {
+				log.Error(err, "Failed to remove finalizer from non-VI ConfigMap")
+				return ctrl.Result{}, err
+			}
+		}
 		return ctrl.Result{}, nil
 	}
 
-	// 3. Extract virtualInstanceId
 	virtualInstanceID := getVirtualInstanceIdLabel(sourceCM)
 	if virtualInstanceID == "" {
 		log.Info("ConfigMap is missing or has empty virtualInstanceId in labels, skipping", "dataKey", liferayVirtualInstanceIdLabelKey)
-		// Consider emitting a Kubernetes event here to warn the user.
-		// r.Recorder.Eventf(cm, corev1.EventTypeWarning, "MissingLabel", "ConfigMap %s/%s is missing %", cm.Namespace, cm.Name, liferayVirtualInstanceIdLabelKey)
+		// If it has no VI ID but has our finalizer (and not being deleted), remove the finalizer.
+		if sourceCM.ObjectMeta.DeletionTimestamp.IsZero() && controllerutil.ContainsFinalizer(sourceCM, namespaceFinalizer) {
+			log.Info("ConfigMap has no virtualInstanceID but has finalizer. Removing finalizer.")
+			controllerutil.RemoveFinalizer(sourceCM, namespaceFinalizer)
+			if err := r.Update(ctx, sourceCM); err != nil {
+				log.Error(err, "Failed to remove finalizer from ConfigMap with no virtualInstanceID")
+				return ctrl.Result{}, err
+			}
+		}
 		return ctrl.Result{}, nil // Do not requeue if data is malformed permanently.
 	}
 
 	log = log.WithValues("virtualInstanceID", virtualInstanceID)
 
-	// 4. Construct the desired Namespace name
+	// Handle deletion of the source ConfigMap
+	if !sourceCM.ObjectMeta.DeletionTimestamp.IsZero() {
+		if controllerutil.ContainsFinalizer(sourceCM, namespaceFinalizer) {
+			log.Info("ConfigMap is being deleted, performing cleanup of associated Namespaces")
+
+			if err := r.cleanupAssociatedNamespaces(ctx, virtualInstanceID, log); err != nil {
+				log.Error(err, "Failed to cleanup associated Namespaces during ConfigMap deletion")
+				return ctrl.Result{}, err // Requeue to retry cleanup
+			}
+
+			log.Info("Namespace cleanup successful, removing finalizer from ConfigMap")
+			controllerutil.RemoveFinalizer(sourceCM, namespaceFinalizer)
+			if err := r.Update(ctx, sourceCM); err != nil {
+				log.Error(err, "Failed to remove finalizer from ConfigMap")
+				return ctrl.Result{}, err
+			}
+			log.Info("Finalizer removed from ConfigMap")
+		}
+		return ctrl.Result{}, nil // Stop processing if it's being deleted
+	}
+
+	// Add finalizer if it doesn't exist
+	if !controllerutil.ContainsFinalizer(sourceCM, namespaceFinalizer) {
+		log.Info("Adding finalizer to ConfigMap", "finalizer", namespaceFinalizer)
+		controllerutil.AddFinalizer(sourceCM, namespaceFinalizer)
+		if err := r.Update(ctx, sourceCM); err != nil {
+			log.Error(err, "Failed to add finalizer to ConfigMap")
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{Requeue: true}, nil // Requeue to ensure CM is updated before proceeding
+	}
+
+	// Construct the desired Namespace name
 	defaultNamespaceName, err := utils.VirtuaInstanceIdToNamespace(virtualInstanceID, applicationAlias)
 	if err != nil {
 		log.Error(err, "Failed to construct desired Namespace name", "virtualInstanceID", virtualInstanceID, "applicationAlias", applicationAlias, "namespaceName", defaultNamespaceName)
 		return ctrl.Result{}, err
 	}
-
 	log = log.WithValues("defaultTargetNamespace", defaultNamespaceName)
 
-	// 5. List all Namespaces associated with this Virtual Instance ID
+	// List all Namespaces associated with this Virtual Instance ID (managed by this controller)
 	namespaceList := &corev1.NamespaceList{}
 	listOpts := []client.ListOption{
 		client.MatchingLabels{liferayVirtualInstanceIdLabelKey: virtualInstanceID},
@@ -123,15 +170,10 @@ func (r *ClientExtensionNamespaceReconciler) Reconcile(ctx context.Context, req 
 
 	defaultNamespaceFound := false
 	for i := range namespaceList.Items {
-		// Get a pointer to the item in the list to modify it directly for the update.
-		// This avoids issues with loop variable scope if we were to update item by value.
 		nsToUpdate := &namespaceList.Items[i]
 		logForNs := log.WithValues("namespace", nsToUpdate.Name)
 
-		// Store original state for comparison to see if an update is needed
-		originalOwnerRefs := make([]metav1.OwnerReference, len(nsToUpdate.OwnerReferences))
-		copy(originalOwnerRefs, nsToUpdate.OwnerReferences)
-
+		// Store original labels for comparison
 		originalLabels := make(map[string]string)
 		if nsToUpdate.Labels != nil {
 			for k, v := range nsToUpdate.Labels {
@@ -139,11 +181,8 @@ func (r *ClientExtensionNamespaceReconciler) Reconcile(ctx context.Context, req 
 			}
 		}
 
-		// Ensure OwnerReference to the ConfigMap
-		if err := ctrl.SetControllerReference(sourceCM, nsToUpdate, r.Scheme); err != nil {
-			logForNs.Error(err, "Failed to ensure owner reference on existing Namespace")
-			return ctrl.Result{}, err // Requeue on error
-		}
+		// Remove OwnerReference to the source ConfigMap if it exists (migration)
+		ownerRefRemoved := r.removeCmOwnerReference(nsToUpdate, sourceCM)
 
 		// Ensure standard labels are present and correct (preserve other existing labels)
 		if nsToUpdate.Labels == nil {
@@ -151,27 +190,26 @@ func (r *ClientExtensionNamespaceReconciler) Reconcile(ctx context.Context, req 
 		}
 		desiredStdLabels := r.desiredNamespaceLabels(virtualInstanceID)
 		for k, v := range desiredStdLabels {
-			// This ensures our managed labels are set to the correct values.
-			// If a managed label already exists with a different value, it will be updated.
-			// If it doesn't exist, it will be added.
-			// Other labels not in desiredStdLabels will be preserved.
 			nsToUpdate.Labels[k] = v
 		}
 
 		// Check if an update to the Namespace object is actually needed
-		ownerRefsChanged := !ownerReferencesDeepEqual(originalOwnerRefs, nsToUpdate.OwnerReferences)
-		// reflect.DeepEqual is suitable for comparing label maps.
 		labelsChanged := !reflect.DeepEqual(originalLabels, nsToUpdate.Labels)
 
-		if ownerRefsChanged || labelsChanged {
-			logForNs.Info("Updating existing Namespace due to owner reference or label changes.")
+		if ownerRefRemoved || labelsChanged {
+			if ownerRefRemoved {
+				logForNs.Info("Updating existing Namespace: removed OwnerReference to source ConfigMap.")
+			}
+			if labelsChanged {
+				logForNs.Info("Updating existing Namespace: labels changed.")
+			}
 			if err := r.Update(ctx, nsToUpdate); err != nil {
 				logForNs.Error(err, "Failed to update existing Namespace")
 				return ctrl.Result{}, err
 			}
 			logForNs.Info("Successfully updated existing Namespace")
 		} else {
-			logForNs.Info("Existing Namespace is already in the desired state regarding owner and standard labels.")
+			logForNs.Info("Existing Namespace is already in the desired state regarding labels and owner references.")
 		}
 
 		if nsToUpdate.Name == defaultNamespaceName {
@@ -185,18 +223,14 @@ func (r *ClientExtensionNamespaceReconciler) Reconcile(ctx context.Context, req 
 		}
 	}
 
-	// 6. If the default namespace (virtualInstanceId-cx) was not found among the labeled namespaces, create it.
+	// If the default namespace was not found among the labeled namespaces, create it.
 	if !defaultNamespaceFound {
 		log.Info("Default target namespace not found, creating new one.", "namespaceName", defaultNamespaceName)
 		ns := r.newNamespaceForConfigMap(defaultNamespaceName, virtualInstanceID)
-		if err := ctrl.SetControllerReference(sourceCM, ns, r.Scheme); err != nil {
-			log.Error(err, "Failed to set owner reference on new default Namespace")
-			return ctrl.Result{}, err
-		}
-
+		// DO NOT set OwnerReference from sourceCM to ns
 		log.Info("Creating default Namespace", "namespace", ns.Name)
 		if err := r.Create(ctx, ns); err != nil {
-			if errors.IsAlreadyExists(err) {
+			if apierrors.IsAlreadyExists(err) {
 				// This can happen if another reconcile loop or process created it just now.
 				log.Info("Default namespace was created concurrently, will reconcile again.")
 				return ctrl.Result{Requeue: true}, nil
@@ -221,6 +255,50 @@ func (r *ClientExtensionNamespaceReconciler) Reconcile(ctx context.Context, req 
 	return ctrl.Result{}, nil
 }
 
+// cleanupAssociatedNamespaces deletes all namespaces managed by this controller for a given virtualInstanceID.
+func (r *ClientExtensionNamespaceReconciler) cleanupAssociatedNamespaces(ctx context.Context, virtualInstanceID string, log logr.Logger) error {
+	log.Info("Listing namespaces for cleanup", "virtualInstanceID", virtualInstanceID)
+	namespaceList := &corev1.NamespaceList{}
+	listOpts := []client.ListOption{
+		client.MatchingLabels{
+			liferayVirtualInstanceIdLabelKey: virtualInstanceID,
+			managedByLabelKey:                controllerName,
+		},
+	}
+
+	if err := r.List(ctx, namespaceList, listOpts...); err != nil {
+		log.Error(err, "Failed to list namespaces for cleanup")
+		return err
+	}
+
+	if len(namespaceList.Items) == 0 {
+		log.Info("No namespaces found for cleanup associated with this virtualInstanceID")
+		return nil
+	}
+
+	var errs []error
+	for _, ns := range namespaceList.Items {
+		nsToDelete := ns // Use a new variable for the loop scope
+		log.Info("Deleting namespace", "namespaceName", nsToDelete.Name)
+		if err := r.Delete(ctx, &nsToDelete); err != nil {
+			if !apierrors.IsNotFound(err) { // Ignore not found errors
+				log.Error(err, "Failed to delete namespace", "namespaceName", nsToDelete.Name)
+				errs = append(errs, err)
+			}
+		}
+	}
+
+	if len(errs) > 0 {
+		// Consider using k8s.io/apimachinery/pkg/util/errors.NewAggregate(errs) for multiple errors
+		return errs[0] // Return the first error for simplicity
+	}
+
+	// Optionally, re-list to confirm deletion before returning success.
+	// For now, we assume delete calls will eventually succeed or are already gone.
+	log.Info("All associated namespaces have been requested for deletion.")
+	return nil
+}
+
 // syncSourceConfigMapToNamespace ensures a copy of the sourceCM exists in the targetNamespace and is up-to-date.
 func (r *ClientExtensionNamespaceReconciler) syncSourceConfigMapToNamespace(ctx context.Context, sourceCM *corev1.ConfigMap, targetNamespace *corev1.Namespace) error {
 	log := logf.FromContext(ctx).WithValues("targetNamespace", targetNamespace.Name, "sourceConfigMap", sourceCM.Name)
@@ -230,7 +308,7 @@ func (r *ClientExtensionNamespaceReconciler) syncSourceConfigMapToNamespace(ctx 
 
 	err := r.Get(ctx, client.ObjectKey{Namespace: targetNamespace.Name, Name: syncedCMName}, syncedCM)
 	if err != nil {
-		if errors.IsNotFound(err) {
+		if apierrors.IsNotFound(err) {
 			// Synced ConfigMap does not exist, create it.
 			log.Info("ConfigMap copy not found in target namespace, creating.", "configMapName", syncedCMName)
 			newSyncedCM := r.newSyncedConfigMap(sourceCM, targetNamespace, syncedCMName)
@@ -418,10 +496,8 @@ func (r *ClientExtensionNamespaceReconciler) SetupWithManager(mgr ctrl.Manager, 
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1.ConfigMap{}).
-		Owns(&corev1.Namespace{}). // Watch for Namespace events that this controller owns
-		// Also own the synced ConfigMaps. If a synced CM is deleted externally,
-		// this will trigger a reconcile of the source CM, which will then recreate the synced CM.
-		Owns(&corev1.ConfigMap{}).
+		// We don't use Owns(&corev1.Namespace{}) because the CM no longer owns the Namespace.
+		// We also don't need Owns(&corev1.ConfigMap{}) for synced CMs, as their lifecycle is managed by the source CM's reconcile loop.
 		WithEventFilter(eventFilterPredicate).
 		Named(controllerName).
 		Complete(r)
@@ -453,34 +529,29 @@ func isSyncedConfigMap(cm *corev1.ConfigMap) bool {
 	return ok
 }
 
-// ownerReferencesDeepEqual checks if two slices of OwnerReference are semantically equal.
-func ownerReferencesDeepEqual(expected, actual []metav1.OwnerReference) bool {
-	if len(expected) != len(actual) {
+// removeCmOwnerReference removes an OwnerReference pointing to the given ConfigMap from the Namespace.
+// Returns true if an owner reference was removed.
+func (r *ClientExtensionNamespaceReconciler) removeCmOwnerReference(ns *corev1.Namespace, cmOwner *corev1.ConfigMap) bool {
+	if ns == nil || cmOwner == nil {
 		return false
 	}
-	// This is a simplified check. For a truly robust check, you might need to
-	// sort them or use a library that handles unordered slice comparison if order doesn't matter.
-	// However, for owner references, the list is usually small and order might be preserved by SetControllerReference.
-	// For this controller, we primarily care that *our* controller reference is present.
-	// metav1.IsControlledBy is a good check for a specific owner.
-	// A full deep equal is more complex if order can vary.
-	// Let's assume order is consistent or check for presence of each expected ref in actual.
-	for _, expRef := range expected {
-		found := false
-		for _, actRef := range actual {
-			if expRef.APIVersion == actRef.APIVersion &&
-				expRef.Kind == actRef.Kind &&
-				expRef.Name == actRef.Name &&
-				expRef.UID == actRef.UID &&
-				(expRef.Controller == nil && actRef.Controller == nil || (expRef.Controller != nil && actRef.Controller != nil && *expRef.Controller == *actRef.Controller)) &&
-				(expRef.BlockOwnerDeletion == nil && actRef.BlockOwnerDeletion == nil || (expRef.BlockOwnerDeletion != nil && actRef.BlockOwnerDeletion != nil && *expRef.BlockOwnerDeletion == *actRef.BlockOwnerDeletion)) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
+	var newOwnerReferences []metav1.OwnerReference
+	removed := false
+	// Correctly get GVK for ConfigMap
+	ownerGVK := corev1.SchemeGroupVersion.WithKind("ConfigMap")
+
+	for _, ref := range ns.GetOwnerReferences() {
+		if ref.APIVersion == ownerGVK.GroupVersion().String() &&
+			ref.Kind == ownerGVK.Kind &&
+			ref.Name == cmOwner.GetName() &&
+			ref.UID == cmOwner.GetUID() {
+			removed = true
+		} else {
+			newOwnerReferences = append(newOwnerReferences, ref)
 		}
 	}
-	return true
+	if removed {
+		ns.SetOwnerReferences(newOwnerReferences)
+	}
+	return removed
 }
