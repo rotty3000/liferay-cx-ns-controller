@@ -294,7 +294,9 @@ var _ = Describe("Manager", Ordered, func() {
 				// _, _ = fmt.Fprintf(GinkgoWriter, "Controller logs:\n %s", controllerOutput)
 
 				g.Expect(controllerOutput).To(ContainSubstring(
-					`Predicate returned false, ignoring event	{"controller": "liferay-cx-ns-controller", "event_type": "CreateEvent", "gvk": "/, Kind=*v1.ConfigMap", "namespace": "liferay-cx-ns-controller-system", "name": "%s"}`, cmName,
+					`Predicate returned false, ignoring event	{"controller": "liferay-cx-ns-controller", `+
+						`"event_type": "CreateEvent", "gvk": "/, Kind=*v1.ConfigMap", "namespace": `+
+						`"liferay-cx-ns-controller-system", "name": "%s"}`, cmName,
 				))
 			}
 			Eventually(check).Should(Succeed())
@@ -334,14 +336,18 @@ var _ = Describe("Manager", Ordered, func() {
 				// _, _ = fmt.Fprintf(GinkgoWriter, "Controller logs:\n %s", controllerOutput)
 
 				g.Expect(controllerOutput).To(ContainSubstring(
-					`Predicate returned false, ignoring event	{"controller": "liferay-cx-ns-controller", "event_type": "CreateEvent", "gvk": "/, Kind=*v1.ConfigMap", "namespace": "liferay-cx-ns-controller-system", "name": "%s"}`, cmName,
+					`Predicate returned false, ignoring event	{"controller": "liferay-cx-ns-controller", `+
+						`"event_type": "CreateEvent", "gvk": "/, Kind=*v1.ConfigMap", "namespace": `+
+						`"liferay-cx-ns-controller-system", "name": "%s"}`, cmName,
 				))
 			}
 			Eventually(check).Should(Succeed())
 		})
 
 		It("should create a default client extension namespace", func() {
-			By("by creating a ConfigMap that has the type label and virtual instance label and making sure the controller creates the default client extension namespace for it")
+			By(`by creating a ConfigMap that has the type label and virtual
+				instance label and making sure the controller creates the
+				default client extension namespace for it`)
 
 			cmName := tutils.GenerateRandomConfigMapName()
 			virtualInstanceId := tutils.GenerateRandomConfigMapName()
@@ -374,9 +380,11 @@ var _ = Describe("Manager", Ordered, func() {
 				// controllerOutput, _ := getLogs(controllerPodName, namespace)
 				// g.Expect(err).NotTo(HaveOccurred())
 
-				// _, _ = fmt.Fprintf(GinkgoWriter, "=======================================\nController logs:\n %s", controllerOutput)
+				// _, _ = fmt.Fprintf(
+				// 	GinkgoWriter, "=======================================\nController logs:\n %s", controllerOutput)
 
-				cmd := exec.Command("kubectl", "get", "ns", "--selector", "dxp.lxc.liferay.com/virtualInstanceId="+virtualInstanceId,
+				cmd := exec.Command(
+					"kubectl", "get", "ns", "--selector", "dxp.lxc.liferay.com/virtualInstanceId="+virtualInstanceId,
 					"-o", "jsonpath={.items[0].metadata.name}")
 				output, err := tutils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())

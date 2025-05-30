@@ -93,7 +93,7 @@ func (r *ClientExtensionNamespaceReconciler) Reconcile(ctx context.Context, req 
 	if !isLiferayVirtualInstanceCM(sourceCM) {
 		log.V(1).Info("ConfigMap is not a Liferay Virtual Instance ConfigMap.")
 		// If it's not a VI CM but has our finalizer (and not being deleted), remove the finalizer.
-		if sourceCM.ObjectMeta.DeletionTimestamp.IsZero() && controllerutil.ContainsFinalizer(sourceCM, namespaceFinalizer) {
+		if sourceCM.DeletionTimestamp.IsZero() && controllerutil.ContainsFinalizer(sourceCM, namespaceFinalizer) {
 			log.Info("Removing finalizer from ConfigMap that is no longer a Liferay VI CM.")
 			controllerutil.RemoveFinalizer(sourceCM, namespaceFinalizer)
 			if err := r.Update(ctx, sourceCM); err != nil {
@@ -108,7 +108,7 @@ func (r *ClientExtensionNamespaceReconciler) Reconcile(ctx context.Context, req 
 	if virtualInstanceID == "" {
 		log.Info("ConfigMap is missing or has empty virtualInstanceId in labels, skipping", "dataKey", liferayVirtualInstanceIdLabelKey)
 		// If it has no VI ID but has our finalizer (and not being deleted), remove the finalizer.
-		if sourceCM.ObjectMeta.DeletionTimestamp.IsZero() && controllerutil.ContainsFinalizer(sourceCM, namespaceFinalizer) {
+		if sourceCM.DeletionTimestamp.IsZero() && controllerutil.ContainsFinalizer(sourceCM, namespaceFinalizer) {
 			log.Info("ConfigMap has no virtualInstanceID but has finalizer. Removing finalizer.")
 			controllerutil.RemoveFinalizer(sourceCM, namespaceFinalizer)
 			if err := r.Update(ctx, sourceCM); err != nil {
@@ -122,7 +122,7 @@ func (r *ClientExtensionNamespaceReconciler) Reconcile(ctx context.Context, req 
 	log = log.WithValues("virtualInstanceID", virtualInstanceID)
 
 	// Handle deletion of the source ConfigMap
-	if !sourceCM.ObjectMeta.DeletionTimestamp.IsZero() {
+	if !sourceCM.DeletionTimestamp.IsZero() {
 		if controllerutil.ContainsFinalizer(sourceCM, namespaceFinalizer) {
 			log.Info("ConfigMap is being deleted, performing cleanup of associated Namespaces")
 
