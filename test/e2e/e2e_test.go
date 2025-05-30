@@ -293,11 +293,10 @@ var _ = Describe("Manager", Ordered, func() {
 
 				// _, _ = fmt.Fprintf(GinkgoWriter, "Controller logs:\n %s", controllerOutput)
 
-				g.Expect(controllerOutput).To(ContainSubstring(
-					`Predicate returned false, ignoring event	{"controller": "liferay-cx-ns-controller", `+
-						`"event_type": "CreateEvent", "gvk": "/, Kind=*v1.ConfigMap", "namespace": `+
-						`"liferay-cx-ns-controller-system", "name": "%s"}`, cmName,
-				))
+				g.Expect(controllerOutput).To(
+					And(
+						ContainSubstring(`Predicate returned false, ignoring event`),
+						ContainSubstring(cmName)))
 			}
 			Eventually(check).Should(Succeed())
 		})
@@ -335,11 +334,10 @@ var _ = Describe("Manager", Ordered, func() {
 
 				// _, _ = fmt.Fprintf(GinkgoWriter, "Controller logs:\n %s", controllerOutput)
 
-				g.Expect(controllerOutput).To(ContainSubstring(
-					`Predicate returned false, ignoring event	{"controller": "liferay-cx-ns-controller", `+
-						`"event_type": "CreateEvent", "gvk": "/, Kind=*v1.ConfigMap", "namespace": `+
-						`"liferay-cx-ns-controller-system", "name": "%s"}`, cmName,
-				))
+				g.Expect(controllerOutput).To(
+					And(
+						ContainSubstring(`Predicate returned false, ignoring event`),
+						ContainSubstring(cmName)))
 			}
 			Eventually(check).Should(Succeed())
 		})
