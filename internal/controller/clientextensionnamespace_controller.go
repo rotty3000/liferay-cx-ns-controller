@@ -462,7 +462,6 @@ func (r *ClientExtensionNamespaceReconciler) SetupWithManager(mgr ctrl.Manager, 
 				if ok {
 					isOldVI = isLiferayVirtualInstanceCM(cmOld) && !isSyncedConfigMap(cmOld)
 				}
-
 			}
 			// Process if it is or was a Liferay VI CM.
 			// Also consider if data changed for an existing VI CM.
