@@ -204,10 +204,21 @@ func main() {
 	}
 
 	if err := (&controller.ClientExtensionNamespaceReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		RootReconciler: controller.RootReconciler{
+			Client: mgr.GetClient(),
+			Scheme: mgr.GetScheme(),
+		},
 	}).SetupWithManager(mgr, enablePredicateLogging); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ConfigMap")
+		os.Exit(1)
+	}
+	if err := (&controller.NamespaceReconciler{
+		RootReconciler: controller.RootReconciler{
+			Client: mgr.GetClient(),
+			Scheme: mgr.GetScheme(),
+		},
+	}).SetupWithManager(mgr, enablePredicateLogging); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "Namespace")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder

@@ -252,8 +252,17 @@ var _ = BeforeSuite(func() {
 
 	// setup our controller
 	err = (&ClientExtensionNamespaceReconciler{
-		Client: k8sManager.GetClient(),
-		Scheme: k8sManager.GetScheme(),
+		RootReconciler: RootReconciler{
+			Client: k8sManager.GetClient(),
+			Scheme: k8sManager.GetScheme(),
+		},
+	}).SetupWithManager(k8sManager, true)
+	Expect(err).ToNot(HaveOccurred())
+	err = (&NamespaceReconciler{
+		RootReconciler: RootReconciler{
+			Client: k8sManager.GetClient(),
+			Scheme: k8sManager.GetScheme(),
+		},
 	}).SetupWithManager(k8sManager, true)
 	Expect(err).ToNot(HaveOccurred())
 
