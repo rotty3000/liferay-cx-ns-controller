@@ -30,8 +30,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
 
-// NamespaceReconciler reconciles a Namespace object
-type NamespaceReconciler struct {
+// ExtensionNamespaceReconciler reconciles a Namespace object
+type ExtensionNamespaceReconciler struct {
 	RootReconciler
 }
 
@@ -48,7 +48,7 @@ type NamespaceReconciler struct {
 //
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.21.0/pkg/reconcile
-func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *ExtensionNamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx).WithValues("namespace", req.Name)
 
 	sourceNS := &corev1.Namespace{}
@@ -116,7 +116,7 @@ func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 }
 
 // SetupWithManager sets up the controller with the Manager.
-func (r *NamespaceReconciler) SetupWithManager(mgr ctrl.Manager, enablePredicateLogging bool) error {
+func (r *ExtensionNamespaceReconciler) SetupWithManager(mgr ctrl.Manager, enablePredicateLogging bool) error {
 
 	// Predicate to filter for ConfigMaps that are Liferay Virtual Instances.
 	var eventFilterPredicate predicate.Predicate = predicate.Funcs{

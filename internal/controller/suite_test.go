@@ -258,7 +258,7 @@ var _ = BeforeSuite(func() {
 		},
 	}).SetupWithManager(k8sManager, true)
 	Expect(err).ToNot(HaveOccurred())
-	err = (&NamespaceReconciler{
+	err = (&ExtensionNamespaceReconciler{
 		RootReconciler: RootReconciler{
 			Client: k8sManager.GetClient(),
 			Scheme: k8sManager.GetScheme(),

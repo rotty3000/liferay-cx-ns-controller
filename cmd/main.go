@@ -212,7 +212,7 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "ConfigMap")
 		os.Exit(1)
 	}
-	if err := (&controller.NamespaceReconciler{
+	if err := (&controller.ExtensionNamespaceReconciler{
 		RootReconciler: controller.RootReconciler{
 			Client: mgr.GetClient(),
 			Scheme: mgr.GetScheme(),
