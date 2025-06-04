@@ -34,8 +34,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
 
-// ClientExtensionNamespaceReconciler reconciles a ConfigMap object
-type ClientExtensionNamespaceReconciler struct {
+// DXPMetadataConfigMapReconciler reconciles a ConfigMap object
+type DXPMetadataConfigMapReconciler struct {
 	RootReconciler
 }
 
@@ -49,7 +49,7 @@ type ClientExtensionNamespaceReconciler struct {
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
-func (r *ClientExtensionNamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *DXPMetadataConfigMapReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx).WithValues("configmap", req.NamespacedName)
 
 	sourceCM := &corev1.ConfigMap{}
@@ -234,7 +234,7 @@ func (r *ClientExtensionNamespaceReconciler) Reconcile(ctx context.Context, req 
 }
 
 // cleanupAssociatedNamespaces deletes all namespaces managed by this controller for a given virtualInstanceID.
-func (r *ClientExtensionNamespaceReconciler) cleanupAssociatedNamespaces(ctx context.Context, cm *corev1.ConfigMap, virtualInstanceID string, log logr.Logger) error {
+func (r *DXPMetadataConfigMapReconciler) cleanupAssociatedNamespaces(ctx context.Context, cm *corev1.ConfigMap, virtualInstanceID string, log logr.Logger) error {
 	log.Info("Listing namespaces for cleanup", "virtualInstanceID", virtualInstanceID)
 	namespaceList := &corev1.NamespaceList{}
 	listOpts := []client.ListOption{
@@ -280,7 +280,7 @@ func (r *ClientExtensionNamespaceReconciler) cleanupAssociatedNamespaces(ctx con
 }
 
 // newNamespaceForConfigMap constructs a new Namespace object.
-func (r *ClientExtensionNamespaceReconciler) newNamespaceForConfigMap(sourceCM *corev1.ConfigMap, name, virtualInstanceID string) *corev1.Namespace {
+func (r *DXPMetadataConfigMapReconciler) newNamespaceForConfigMap(sourceCM *corev1.ConfigMap, name, virtualInstanceID string) *corev1.Namespace {
 	return &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   name,
@@ -290,7 +290,7 @@ func (r *ClientExtensionNamespaceReconciler) newNamespaceForConfigMap(sourceCM *
 }
 
 // SetupWithManager sets up the controller with the Manager.
-func (r *ClientExtensionNamespaceReconciler) SetupWithManager(mgr ctrl.Manager, enablePredicateLogging bool) error {
+func (r *DXPMetadataConfigMapReconciler) SetupWithManager(mgr ctrl.Manager, enablePredicateLogging bool) error {
 	// Predicate to filter events.
 	// It will allow events if the ConfigMap:
 	// 1. Is a Liferay Virtual Instance CM (has the liferayMetadataTypeLabelKey).

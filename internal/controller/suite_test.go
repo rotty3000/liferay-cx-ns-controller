@@ -251,7 +251,7 @@ var _ = BeforeSuite(func() {
 	Expect(err).ToNot(HaveOccurred())
 
 	// setup our controller
-	err = (&ClientExtensionNamespaceReconciler{
+	err = (&DXPMetadataConfigMapReconciler{
 		RootReconciler: RootReconciler{
 			Client: k8sManager.GetClient(),
 			Scheme: k8sManager.GetScheme(),

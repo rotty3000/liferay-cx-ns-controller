@@ -203,7 +203,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := (&controller.ClientExtensionNamespaceReconciler{
+	if err := (&controller.DXPMetadataConfigMapReconciler{
 		RootReconciler: controller.RootReconciler{
 			Client: mgr.GetClient(),
 			Scheme: mgr.GetScheme(),
