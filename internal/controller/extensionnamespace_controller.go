@@ -41,10 +41,6 @@ type ExtensionNamespaceReconciler struct {
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the Namespace object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
 //
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.21.0/pkg/reconcile
@@ -61,64 +57,98 @@ func (r *ExtensionNamespaceReconciler) Reconcile(ctx context.Context, req ctrl.R
 		return ctrl.Result{}, err
 	}
 
-	// Check if this Namespace has the virtualInstanceId label. If not, ignore it.
+	// Assertion 1: Check if this Namespace has the necessary prerequisite labels.
+	// This is a secondary check; the predicate should be the primary filter.
 	if !hasNecessaryLabel(sourceNS) {
-		log.Info("Namespace does not have the necessary labels to be managed by this controller, skipping", "namespace", sourceNS.Name)
+		log.Info("Namespace does not have all necessary prerequisite labels, skipping", "namespace", sourceNS.Name)
 		return ctrl.Result{}, nil
 	}
 
-	virtualInstanceID := getVirtualInstanceIdLabel(&sourceNS.ObjectMeta)
-	if virtualInstanceID == "" {
-		log.Info("Namespace is missing or has empty virtualInstanceId in labels, skipping", "dataKey", liferayVirtualInstanceIdLabelKey)
-		return ctrl.Result{}, nil // Do not requeue if data is malformed permanently.
-	}
+	// Extract necessary information from labels
+	nsObjectMeta := &sourceNS.ObjectMeta
+	virtualInstanceID := getVirtualInstanceIdLabel(nsObjectMeta)            // Already confirmed to exist by hasNecessaryLabel
+	managementNamespace := getManagedByResourceNamespaceLabel(nsObjectMeta) // Already confirmed to exist by hasNecessaryLabel
 
-	managementNamespace := getManagedByResourceNamespaceLabel(&sourceNS.ObjectMeta)
 	if managementNamespace == "" {
-		log.Info("Namespace is missing or has empty managed-by-resource-namespace in labels, skipping", "dataKey", managedByResourceNamespaceLabelKey)
-		return ctrl.Result{}, nil // Do not requeue if data is malformed permanently.
+		// This case should ideally be caught by hasNecessaryLabel if it checks for non-empty.
+		// Adding a log for safety, though hasNecessaryLabel should prevent this.
+		log.Error(fmt.Errorf("management namespace label is empty"), "Prerequisite label missing or empty", "label", managedByResourceNamespaceLabelKey)
+		return ctrl.Result{}, nil // Don't requeue if essential info is malformed.
 	}
 
-	// add management labels to the namespace
-	if sourceNS.Labels == nil {
-		sourceNS.Labels = make(map[string]string)
+	// Assertion 2: Ensure Namespace labels are correct, specifically the 'managed-by' label for this controller.
+	// Other critical labels (virtualInstanceId, managed-by-resource, managed-by-resource-namespace)
+	// are expected to be set by the DXPMetadataConfigMapReconciler.
+	currentLabels := sourceNS.GetLabels()
+	if currentLabels == nil { // Should not happen if hasNecessaryLabel passed and labels existed.
+		currentLabels = make(map[string]string)
 	}
 
-	for k, v := range desiredNamespaceLabels(&sourceNS.ObjectMeta, managementNamespace, virtualInstanceID) {
-		sourceNS.Labels[k] = v
-	}
-
-	// update the Namespace
-	if err := r.Update(ctx, sourceNS); err != nil {
-		log.Error(err, "Failed to update the Namespace")
-		return ctrl.Result{}, err
-	}
-
-	dxpMetadataCM := &corev1.ConfigMap{}
-	dxpMetadataCMName := fmt.Sprintf(`%s-lxc-dxp-metadata`, virtualInstanceID)
-	if err := r.Get(ctx, client.ObjectKey{Name: dxpMetadataCMName, Namespace: sourceNS.Name}, dxpMetadataCM); err != nil {
-		if apierrors.IsNotFound(err) {
-			// ConfigMap not found, we need to sync it from the management namespace
-			if err := r.Get(ctx, client.ObjectKey{Name: dxpMetadataCMName, Namespace: managementNamespace}, dxpMetadataCM); err != nil {
-				if apierrors.IsNotFound(err) {
-					return ctrl.Result{}, err
-				}
-			}
+	labelsNeedUpdate := false
+	for k, v := range desiredNamespaceLabels(nsObjectMeta, managementNamespace, virtualInstanceID) {
+		if val, ok := currentLabels[k]; !ok || val != v {
+			currentLabels[k] = v
+			labelsNeedUpdate = true
 		}
 	}
 
-	if err := r.syncSourceConfigMapToNamespace(ctx, dxpMetadataCM, sourceNS); err != nil {
-		// log.Error(err, "Failed to sync source ConfigMap to newly created default namespace", "sourceCM", sourceCM.Name, "namespace", createdNs.Name)
+	// Ensure other essential labels are as expected (they should be, due to hasNecessaryLabel and extraction logic)
+	// This also ensures that if desiredNamespaceLabels were to enforce more, they'd be set.
+	// For this reconciler, we primarily care about managedByLabelKey.
+	// The DXPMetadataConfigMapReconciler is responsible for the initial comprehensive set.
+
+	if labelsNeedUpdate {
+		log.Info("Updating Namespace labels to ensure controller management label.", "namespace", sourceNS.Name, "targetLabels", currentLabels)
+		sourceNS.SetLabels(currentLabels)
+		if err := r.Update(ctx, sourceNS); err != nil {
+			log.Error(err, "Failed to update Namespace labels", "namespace", sourceNS.Name)
+			return ctrl.Result{}, err
+		}
+		log.Info("Successfully updated Namespace labels. Requeueing.", "namespace", sourceNS.Name)
+		return ctrl.Result{Requeue: true}, nil
+	}
+	log.Info("Namespace labels related to controller management are correct.", "namespace", sourceNS.Name)
+
+	// Find a ConfigMaps in the management namespace that have the label "lxc.liferay.com/metadataType: dxp" and matching label "dxp.lxc.liferay.com/virtualInstanceId"
+	authoritativeSourceCM := &corev1.ConfigMap{}
+	authoritativeSourceCMList := &corev1.ConfigMapList{}
+	listOpts := []client.ListOption{
+		client.InNamespace(managementNamespace),
+		client.MatchingLabels{
+			liferayMetadataTypeLabelKey:      liferayMetadataTypeLabelValue,
+			liferayVirtualInstanceIdLabelKey: virtualInstanceID,
+		},
+	}
+	if err := r.List(ctx, authoritativeSourceCMList, listOpts...); err != nil {
+		log.Error(err, "Failed to list dxp metadata configmaps for virtual instance ID", "managementNamespace", managementNamespace, "virtualInstanceID", virtualInstanceID)
+		return ctrl.Result{Requeue: true}, nil
+	}
+	if len(authoritativeSourceCMList.Items) == 0 {
+		err := fmt.Errorf("empty list")
+		log.Error(err, "Failed to list dxp metadata configmaps for virtual instance ID", "managementNamespace", managementNamespace, "virtualInstanceID", virtualInstanceID)
+		return ctrl.Result{Requeue: true}, nil
+	}
+
+	authoritativeSourceCM = &authoritativeSourceCMList.Items[0]
+
+	// Sync the authoritative ConfigMap to the current namespace (sourceNS).
+	// The syncSourceConfigMapToNamespace function will use authoritativeSourceCM.Name as the name for the synced CM.
+	if err := r.syncSourceConfigMapToNamespace(ctx, authoritativeSourceCM, sourceNS); err != nil {
+		log.Error(err, "Failed to sync source ConfigMap to namespace",
+			"sourceConfigMapName", authoritativeSourceCM.Name,
+			"sourceConfigMapNamespace", authoritativeSourceCM.Namespace,
+			"targetNamespace", sourceNS.Name)
 		return ctrl.Result{}, err
 	}
 
+	log.Info("Successfully reconciled Namespace and synced ConfigMap.", "namespace", sourceNS.Name)
 	return ctrl.Result{}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *ExtensionNamespaceReconciler) SetupWithManager(mgr ctrl.Manager, enablePredicateLogging bool) error {
-
-	// Predicate to filter for ConfigMaps that are Liferay Virtual Instances.
+	// Predicate to filter events.
+	// It will allow events if the Namespace has the necessary labels.
 	var eventFilterPredicate predicate.Predicate = predicate.Funcs{
 		CreateFunc: func(e event.CreateEvent) bool {
 			ns, ok := e.Object.(*corev1.Namespace)
@@ -128,11 +158,24 @@ func (r *ExtensionNamespaceReconciler) SetupWithManager(mgr ctrl.Manager, enable
 			return hasNecessaryLabel(ns)
 		},
 		UpdateFunc: func(e event.UpdateEvent) bool {
-			ns, ok := e.ObjectNew.(*corev1.Namespace)
-			if !ok {
-				return false
+			// Process if either old or new object has the labels,
+			// to handle cases where labels are added or removed.
+			oldNs, oldOk := e.ObjectOld.(*corev1.Namespace)
+			newNs, newOk := e.ObjectNew.(*corev1.Namespace)
+
+			process := false
+			if oldOk && hasNecessaryLabel(oldNs) {
+				process = true
 			}
-			return hasNecessaryLabel(ns)
+			if newOk && hasNecessaryLabel(newNs) {
+				process = true
+			}
+
+			// Additionally, if it's an update from a relevant state to another relevant state,
+			// check if relevant fields (like labels themselves) changed.
+			// For simplicity, if it is or was a relevant namespace, reconcile.
+			// More specific checks (e.g., on resourceVersion or generation) can be added if needed.
+			return process
 		},
 		DeleteFunc: func(e event.DeleteEvent) bool {
 			ns, ok := e.Object.(*corev1.Namespace)
@@ -165,15 +208,24 @@ func (r *ExtensionNamespaceReconciler) SetupWithManager(mgr ctrl.Manager, enable
 		Complete(r)
 }
 
-// hasNecessaryLabel checks if the object is a Namespace that should be managed by the controller.
+// hasNecessaryLabel checks if the Namespace has the prerequisite labels
+// (virtualInstanceId and managed-by-resource-namespace) and that they are not empty.
 func hasNecessaryLabel(ns *corev1.Namespace) bool {
 	labels := ns.GetLabels()
 	if labels == nil {
 		return false
 	}
 
-	_, hasVirtualInstanceIdLabel := labels[liferayVirtualInstanceIdLabelKey]
-	_, hasManagedByResourceNamespaceLabel := labels[managedByResourceNamespaceLabelKey]
+	virtualInstanceID, hasVirtualInstanceIdLabel := labels[liferayVirtualInstanceIdLabelKey]
+	if !hasVirtualInstanceIdLabel || virtualInstanceID == "" {
+		return false
+	}
 
-	return hasVirtualInstanceIdLabel && hasManagedByResourceNamespaceLabel
+	managedByResourceNamespace, hasManagedByResourceNamespaceLabel := labels[managedByResourceNamespaceLabelKey]
+	if !hasManagedByResourceNamespaceLabel || managedByResourceNamespace == "" {
+		return false
+	}
+
+	// managedByResourceLabelKey is also crucial but checked during reconcile as its absence is an error state.
+	return true
 }
