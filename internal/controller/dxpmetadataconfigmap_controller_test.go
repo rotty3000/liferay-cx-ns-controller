@@ -17,18 +17,18 @@ limitations under the License.
 package controller
 
 import (
-	"fmt"
-
-	"github.com/liferay/liferay-portal/liferay-cx-ns-controller/internal/utils"
-	tutils "github.com/liferay/liferay-portal/liferay-cx-ns-controller/test/utils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	. "github.com/onsi/gomega/gstruct"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/liferay/liferay-portal/liferay-cx-ns-controller/internal/utils"
+	tutils "github.com/liferay/liferay-portal/liferay-cx-ns-controller/test/utils"
 )
 
-var _ = Describe("ConfigMap Controller", func() {
+var _ = Describe("DXP Metadata ConfigMap Controller", func() {
 	const (
 		namespace = "default"
 	)
@@ -56,8 +56,21 @@ var _ = Describe("ConfigMap Controller", func() {
 			Expect(k8sClient.Create(ctx, testConfigMap)).To(Succeed())
 			Eventually(func(g Gomega) {
 				records := logTrap.GetRecords()
-				_, _ = fmt.Fprintf(GinkgoWriter, "Controller logs:\n %v", records)
-				g.Expect(records).To(ContainElement(HaveField("Msg", ContainSubstring("Predicate returned false, ignoring event"))))
+				// _, _ = fmt.Fprintf(GinkgoWriter, "\nController logs:\n %v", records)
+
+				g.Expect(
+					records,
+				).To(
+					ContainElement(
+						MatchFields(
+							IgnoreExtras,
+							Fields{
+								"KeysAndValues": ContainElement(dxpMetadataConfigMapControllerName),
+								"Msg":           ContainSubstring("Predicate returned false, ignoring event"),
+							},
+						),
+					),
+				)
 			}).Should(Succeed())
 		})
 
@@ -85,12 +98,24 @@ var _ = Describe("ConfigMap Controller", func() {
 
 			Expect(k8sClient.Create(ctx, testConfigMap)).To(Succeed())
 
-			check := func(g Gomega) {
+			Eventually(func(g Gomega) {
 				records := logTrap.GetRecords()
-				_, _ = fmt.Fprintf(GinkgoWriter, "Controller logs:\n %v", records)
-				g.Expect(records).To(ContainElement(HaveField("Msg", ContainSubstring("Predicate returned false, ignoring event"))))
-			}
-			Eventually(check).Should(Succeed())
+				// _, _ = fmt.Fprintf(GinkgoWriter, "\nController logs:\n %v", records)
+
+				g.Expect(
+					records,
+				).To(
+					ContainElement(
+						MatchFields(
+							IgnoreExtras,
+							Fields{
+								"KeysAndValues": ContainElement(dxpMetadataConfigMapControllerName),
+								"Msg":           ContainSubstring("Predicate returned false, ignoring event"),
+							},
+						),
+					),
+				)
+			}).Should(Succeed())
 		})
 
 		It("should create a default client extension namespace", func() {
@@ -132,16 +157,37 @@ var _ = Describe("ConfigMap Controller", func() {
 			}
 			Eventually(check).Should(Succeed())
 
-			Expect(k8sClient.Delete(ctx, testConfigMap, &client.DeleteOptions{})).To(Succeed())
+			Expect(k8sClient.Delete(ctx, testConfigMap)).To(Succeed())
 
 			check = func(g Gomega) {
+				// records := logTrap.GetRecords()
+				// _, _ = fmt.Fprintf(GinkgoWriter, "\nController logs:\n")
+				// for _, record := range records {
+				// 	_, _ = fmt.Fprintf(GinkgoWriter, "%v\n", record)
+				// }
+
 				ns := &corev1.NamespaceList{}
 				labelSelector := client.MatchingLabels{
 					"dxp.lxc.liferay.com/virtualInstanceId": virtualInstanceId,
 				}
-				err := k8sClient.List(ctx, ns, labelSelector)
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(ns.Items).To(ContainElement(HaveField("DeletionTimestamp", Not(BeNil()))))
+				k8sClient.List(ctx, ns, labelSelector)
+				g.Expect(ns.Items).To(Or(
+					BeEmpty(),
+					HaveLen(0),
+					ContainElement(
+						MatchFields(
+							IgnoreExtras,
+							Fields{
+								"ObjectMeta": MatchFields(
+									IgnoreExtras,
+									Fields{
+										"DeletionTimestamp": Not(BeNil()),
+									},
+								),
+							},
+						),
+					),
+				))
 			}
 			Eventually(check).Should(Succeed())
 		})

@@ -22,7 +22,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -30,6 +29,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	. "github.com/onsi/gomega/gstruct"
 
 	"github.com/liferay/liferay-portal/liferay-cx-ns-controller/internal/utils"
 	tutils "github.com/liferay/liferay-portal/liferay-cx-ns-controller/test/utils"
@@ -55,14 +55,12 @@ var _ = Describe("Manager", Ordered, func() {
 	// and deploying the controller.
 	BeforeAll(func() {
 		By("creating manager namespace")
-		cmd := exec.Command("kubectl", "create", "ns", namespace)
-		_, err := tutils.Run(cmd)
+		_, err := tutils.Kubectl(nil, "create", "ns", namespace)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create namespace")
 
 		By("labeling the namespace to enforce the restricted security policy")
-		cmd = exec.Command("kubectl", "label", "--overwrite", "ns", namespace,
+		_, err = tutils.Kubectl(nil, "label", "--overwrite", "ns", namespace,
 			"pod-security.kubernetes.io/enforce=restricted")
-		_, err = tutils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to label namespace with restricted policy")
 
 		// By("installing CRDs")
@@ -71,7 +69,7 @@ var _ = Describe("Manager", Ordered, func() {
 		// Expect(err).NotTo(HaveOccurred(), "Failed to install CRDs")
 
 		By("deploying the controller-manager")
-		cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", projectImage))
+		cmd := exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", projectImage))
 		_, err = tutils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
 	})
@@ -80,11 +78,10 @@ var _ = Describe("Manager", Ordered, func() {
 	// and deleting the namespace.
 	AfterAll(func() {
 		By("cleaning up the curl pod for metrics")
-		cmd := exec.Command("kubectl", "delete", "pod", "curl-metrics", "-n", namespace)
-		_, _ = tutils.Run(cmd)
+		_, _ = tutils.Kubectl(nil, "delete", "pod", "curl-metrics", "-n", namespace)
 
 		By("undeploying the controller-manager")
-		cmd = exec.Command("make", "undeploy")
+		cmd := exec.Command("make", "undeploy")
 		_, _ = tutils.Run(cmd)
 
 		// By("uninstalling CRDs")
@@ -92,8 +89,7 @@ var _ = Describe("Manager", Ordered, func() {
 		// _, _ = tutils.Run(cmd)
 
 		By("removing manager namespace")
-		cmd = exec.Command("kubectl", "delete", "ns", namespace)
-		_, _ = tutils.Run(cmd)
+		_, _ = tutils.Kubectl(nil, "delete", "ns", namespace)
 	})
 
 	// After each test, check for failures and collect logs, events,
@@ -110,8 +106,7 @@ var _ = Describe("Manager", Ordered, func() {
 			}
 
 			By("Fetching Kubernetes events")
-			cmd := exec.Command("kubectl", "get", "events", "-n", namespace, "--sort-by=.lastTimestamp")
-			eventsOutput, err := tutils.Run(cmd)
+			eventsOutput, err := tutils.Kubectl(nil, "get", "events", "-n", namespace, "--sort-by=.lastTimestamp")
 			if err == nil {
 				_, _ = fmt.Fprintf(GinkgoWriter, "Kubernetes events:\n%s", eventsOutput)
 			} else {
@@ -127,8 +122,7 @@ var _ = Describe("Manager", Ordered, func() {
 			}
 
 			By("Fetching controller manager pod description")
-			cmd = exec.Command("kubectl", "describe", "pod", controllerPodName, "-n", namespace)
-			podDescription, err := tutils.Run(cmd)
+			podDescription, err := tutils.Kubectl(nil, "describe", "pod", controllerPodName, "-n", namespace)
 			if err == nil {
 				fmt.Println("Pod description:\n", podDescription)
 			} else {
@@ -145,7 +139,7 @@ var _ = Describe("Manager", Ordered, func() {
 			By("validating that the controller-manager pod is running as expected")
 			verifyControllerUp := func(g Gomega) {
 				// Get the name of the controller-manager pod
-				cmd := exec.Command("kubectl", "get",
+				podOutput, err := tutils.Kubectl(nil, "get",
 					"pods", "-l", "control-plane=controller-manager",
 					"-o", "go-template={{ range .items }}"+
 						"{{ if not .metadata.deletionTimestamp }}"+
@@ -154,7 +148,6 @@ var _ = Describe("Manager", Ordered, func() {
 					"-n", namespace,
 				)
 
-				podOutput, err := tutils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred(), "Failed to retrieve controller-manager pod information")
 				podNames := tutils.GetNonEmptyLines(podOutput)
 				g.Expect(podNames).To(HaveLen(1), "expected 1 controller pod running")
@@ -162,11 +155,10 @@ var _ = Describe("Manager", Ordered, func() {
 				g.Expect(controllerPodName).To(ContainSubstring("controller-manager"))
 
 				// Validate the pod's status
-				cmd = exec.Command("kubectl", "get",
+				output, err := tutils.Kubectl(nil, "get",
 					"pods", controllerPodName, "-o", "jsonpath={.status.phase}",
 					"-n", namespace,
 				)
-				output, err := tutils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(output).To(Equal("Running"), "Incorrect controller-manager pod status")
 			}
@@ -175,16 +167,14 @@ var _ = Describe("Manager", Ordered, func() {
 
 		It("should ensure the metrics endpoint is serving metrics", func() {
 			By("creating a ClusterRoleBinding for the service account to allow access to metrics")
-			cmd := exec.Command("kubectl", "create", "clusterrolebinding", metricsRoleBindingName,
+			_, err := tutils.Kubectl(nil, "create", "clusterrolebinding", metricsRoleBindingName,
 				"--clusterrole=liferay-cx-ns-controller-metrics-reader",
 				fmt.Sprintf("--serviceaccount=%s:%s", namespace, serviceAccountName),
 			)
-			_, err := tutils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create ClusterRoleBinding")
 
 			By("validating that the metrics service is available")
-			cmd = exec.Command("kubectl", "get", "service", metricsServiceName, "-n", namespace)
-			_, err = tutils.Run(cmd)
+			_, err = tutils.Kubectl(nil, "get", "service", metricsServiceName, "-n", namespace)
 			Expect(err).NotTo(HaveOccurred(), "Metrics service should exist")
 
 			By("getting the service account token")
@@ -194,8 +184,7 @@ var _ = Describe("Manager", Ordered, func() {
 
 			By("waiting for the metrics endpoint to be ready")
 			verifyMetricsEndpointReady := func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "endpoints", metricsServiceName, "-n", namespace)
-				output, err := tutils.Run(cmd)
+				output, err := tutils.Kubectl(nil, "get", "endpoints", metricsServiceName, "-n", namespace)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(output).To(ContainSubstring("8443"), "Metrics endpoint is not ready")
 			}
@@ -211,7 +200,7 @@ var _ = Describe("Manager", Ordered, func() {
 			Eventually(verifyMetricsServerStarted).Should(Succeed())
 
 			By("creating the curl-metrics pod to access the metrics endpoint")
-			cmd = exec.Command("kubectl", "run", "curl-metrics", "--restart=Never",
+			_, err = tutils.Kubectl(nil, "run", "curl-metrics", "--restart=Never",
 				"--namespace", namespace,
 				"--image=curlimages/curl:latest",
 				"--overrides",
@@ -237,15 +226,13 @@ var _ = Describe("Manager", Ordered, func() {
 						"serviceAccount": "%s"
 					}
 				}`, token, metricsServiceName, namespace, serviceAccountName))
-			_, err = tutils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create curl-metrics pod")
 
 			By("waiting for the curl-metrics pod to complete.")
 			verifyCurlUp := func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "pods", "curl-metrics",
+				output, err := tutils.Kubectl(nil, "get", "pods", "curl-metrics",
 					"-o", "jsonpath={.status.phase}",
 					"-n", namespace)
-				output, err := tutils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(output).To(Equal("Succeeded"), "curl pod in wrong status")
 			}
@@ -262,7 +249,7 @@ var _ = Describe("Manager", Ordered, func() {
 
 	})
 
-	Context("Virtual Instance ConfigMap tracking", func() {
+	Context("DXP Metadata ConfigMap tracking", func() {
 		It("should ignore ConfigMaps without the type label", func() {
 			By("by creating a ConfigMap that does not have the proper type label and making sure the controller ignores it")
 
@@ -282,9 +269,7 @@ var _ = Describe("Manager", Ordered, func() {
 				},
 			}
 
-			cmd := exec.Command("kubectl", "apply", "-f", "-")
-			cmd.Stdin = strings.NewReader(tutils.ToYAML(testConfigMap))
-			_, err := tutils.Run(cmd)
+			_, err := tutils.Kubectl(testConfigMap, "apply", "-f", "-")
 			Expect(err).NotTo(HaveOccurred(), "Failed to create test ConfigMap", err)
 
 			check := func(g Gomega) {
@@ -323,9 +308,7 @@ var _ = Describe("Manager", Ordered, func() {
 				},
 			}
 
-			cmd := exec.Command("kubectl", "apply", "-f", "-")
-			cmd.Stdin = strings.NewReader(tutils.ToYAML(testConfigMap))
-			_, err := tutils.Run(cmd)
+			_, err := tutils.Kubectl(testConfigMap, "apply", "-f", "-")
 			Expect(err).NotTo(HaveOccurred(), "Failed to create test ConfigMap", err)
 
 			check := func(g Gomega) {
@@ -369,9 +352,7 @@ var _ = Describe("Manager", Ordered, func() {
 				},
 			}
 
-			cmd := exec.Command("kubectl", "apply", "-f", "-")
-			cmd.Stdin = strings.NewReader(tutils.ToYAML(testConfigMap))
-			_, err := tutils.Run(cmd)
+			_, err := tutils.Kubectl(testConfigMap, "apply", "-f", "-")
 			Expect(err).NotTo(HaveOccurred(), "Failed to create test ConfigMap", err)
 
 			check := func(g Gomega) {
@@ -381,17 +362,182 @@ var _ = Describe("Manager", Ordered, func() {
 				// _, _ = fmt.Fprintf(
 				// 	GinkgoWriter, "=======================================\nController logs:\n %s", controllerOutput)
 
-				cmd := exec.Command(
-					"kubectl", "get", "ns", "--selector", "dxp.lxc.liferay.com/virtualInstanceId="+virtualInstanceId,
+				output, err := tutils.Kubectl(nil, "get", "ns", "--selector", "dxp.lxc.liferay.com/virtualInstanceId="+virtualInstanceId,
 					"-o", "jsonpath={.items[0].metadata.name}")
-				output, err := tutils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(output).To(Equal(expectedNamespaceName), "namespace wrong name")
 			}
 			Eventually(check).Should(Succeed())
-			cmd = exec.Command("kubectl", "delete", "cm", cmName, "-n", namespace, "--wait", "--timeout", "5m")
-			_, err = tutils.Run(cmd)
+			_, err = tutils.Kubectl(nil, "delete", "cm", cmName, "-n", namespace, "--wait", "--timeout", "5m")
 			Expect(err).NotTo(HaveOccurred(), "Failed to delete ConfigMap", err)
+		})
+	})
+
+	Context("Extension Namespace tracking", func() {
+		It("should ignore Namespaces without the expected labels", func() {
+			By("by creating a Namespace that does not have the proper labels and making sure the controller ignores it")
+
+			nsName := tutils.GenerateRandomConfigMapName()
+
+			testNamespace := &corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: nsName,
+				},
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "v1",
+					Kind:       "Namespace",
+				},
+			}
+
+			_, err := tutils.Kubectl(testNamespace, "apply", "-f", "-")
+			Expect(err).NotTo(HaveOccurred(), "Failed to create test namespace", err)
+			Eventually(func(g Gomega) {
+				controllerOutput, err := tutils.GetLogs(controllerPodName, namespace)
+				g.Expect(err).NotTo(HaveOccurred())
+				// _, _ = fmt.Fprintf(GinkgoWriter, "\nController logs:\n %v", records)
+
+				g.Expect(controllerOutput).To(
+					And(
+						ContainSubstring(`Predicate returned false, ignoring event`),
+						ContainSubstring(nsName)))
+			}).Should(Succeed())
+			_, err = tutils.Kubectl(nil, "delete", "ns", nsName)
+			Expect(err).NotTo(HaveOccurred(), "Failed to delete test namespace", err)
+		})
+
+		It("should ignore Namespaces with the first but not second expected label", func() {
+			By("by creating a Namespace that has only the second expected label")
+
+			nsName := tutils.GenerateRandomConfigMapName()
+
+			testNamespace := &corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: nsName,
+					Labels: map[string]string{
+						"app.kubernetes.io/managed-by-resource": namespace,
+					},
+				},
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "v1",
+					Kind:       "Namespace",
+				},
+			}
+
+			_, err := tutils.Kubectl(testNamespace, "apply", "-f", "-")
+			Expect(err).NotTo(HaveOccurred(), "Failed to create test namespace", err)
+			Eventually(func(g Gomega) {
+				controllerOutput, err := tutils.GetLogs(controllerPodName, namespace)
+				g.Expect(err).NotTo(HaveOccurred())
+				// _, _ = fmt.Fprintf(GinkgoWriter, "\nController logs:\n %v", records)
+
+				g.Expect(controllerOutput).To(
+					And(
+						ContainSubstring(`Predicate returned false, ignoring event`),
+						ContainSubstring("extension-namespace-controller")))
+			}).Should(Succeed())
+			_, err = tutils.Kubectl(nil, "delete", "ns", nsName)
+			Expect(err).NotTo(HaveOccurred(), "Failed to delete test namespace", err)
+		})
+
+		It("should ignore Namespaces with the second but not first expected label", func() {
+			By("by creating a Namespace that has only the first expected label")
+
+			nsName := tutils.GenerateRandomConfigMapName()
+
+			testNamespace := &corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: nsName,
+					Labels: map[string]string{
+						"dxp.lxc.liferay.com/virtualInstanceId": "vi1",
+					},
+				},
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "v1",
+					Kind:       "Namespace",
+				},
+			}
+
+			_, err := tutils.Kubectl(testNamespace, "apply", "-f", "-")
+			Expect(err).NotTo(HaveOccurred(), "Failed to create test namespace", err)
+			Eventually(func(g Gomega) {
+				controllerOutput, err := tutils.GetLogs(controllerPodName, namespace)
+				g.Expect(err).NotTo(HaveOccurred())
+				// _, _ = fmt.Fprintf(GinkgoWriter, "\nController logs:\n %v", records)
+
+				g.Expect(controllerOutput).To(
+					And(
+						ContainSubstring(`Predicate returned false, ignoring event`),
+						ContainSubstring("extension-namespace-controller")))
+			}).Should(Succeed())
+			_, err = tutils.Kubectl(nil, "delete", "ns", nsName)
+			Expect(err).NotTo(HaveOccurred(), "Failed to delete test namespace", err)
+		})
+
+		It("should take over management of Namespaces with the expected labels", func() {
+			By("creating a DXP metadata Config Map")
+
+			cmName := tutils.GenerateRandomConfigMapName()
+			virtualInstanceId := tutils.GenerateRandomConfigMapName()
+
+			testConfigMap := &corev1.ConfigMap{
+				Data: map[string]string{
+					"test-key": "test-value",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      cmName,
+					Namespace: namespace,
+					Labels: map[string]string{
+						"lxc.liferay.com/metadataType":          "dxp",
+						"dxp.lxc.liferay.com/virtualInstanceId": virtualInstanceId,
+					},
+				},
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "v1",
+					Kind:       "ConfigMap",
+				},
+			}
+
+			_, err := tutils.Kubectl(testConfigMap, "apply", "-f", "-")
+			Expect(err).NotTo(HaveOccurred())
+
+			By("then by creating a custom Namespace that has the expected labels")
+
+			nsName := tutils.GenerateRandomConfigMapName()
+
+			testNamespace := &corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: nsName,
+					Labels: map[string]string{
+						"app.kubernetes.io/managed-by-resource": namespace,
+						"dxp.lxc.liferay.com/virtualInstanceId": virtualInstanceId,
+					},
+				},
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "v1",
+					Kind:       "Namespace",
+				},
+			}
+
+			_, err = tutils.Kubectl(testNamespace, "apply", "-f", "-")
+			Expect(err).NotTo(HaveOccurred(), "Failed to create test namespace", err)
+			Eventually(func(g Gomega) {
+				nsContent, err := tutils.Kubectl(nil, "get", "ns", nsName, "-o", "yaml")
+				g.Expect(err).NotTo(HaveOccurred())
+				tutils.FromYAML(nsContent, testNamespace)
+				g.Expect(testNamespace.Labels["app.kubernetes.io/managed-by"]).To(Equal("cx-liferay-controller-group"))
+
+				copiedCM := &corev1.ConfigMap{}
+				cmContent, err := tutils.Kubectl(nil, "get", "cm", cmName, "-n", testNamespace.Name, "-o", "yaml")
+				g.Expect(err).NotTo(HaveOccurred())
+				tutils.FromYAML(cmContent, copiedCM)
+				g.Expect(copiedCM.ObjectMeta.Labels).To(MatchKeys(IgnoreExtras, Keys{
+					"cx.liferay.com/synced-from-configmap":           Equal(cmName),
+					"cx.liferay.com/synced-from-configmap-namespace": Equal(namespace),
+					"dxp.lxc.liferay.com/virtualInstanceId":          Equal(virtualInstanceId),
+				}))
+			}).Should(Succeed())
+			_, err = tutils.Kubectl(nil, "delete", "ns", nsName)
+			Expect(err).NotTo(HaveOccurred(), "Failed to delete test namespace", err)
 		})
 	})
 })

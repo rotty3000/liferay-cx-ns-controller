@@ -25,9 +25,10 @@ const (
 	syncedFromConfigMapNamespaceLabelKey = "cx.liferay.com/synced-from-configmap-namespace"
 	managedByLabelKey                    = "app.kubernetes.io/managed-by"
 	managedByResourceLabelKey            = "app.kubernetes.io/managed-by-resource"
-	managedByResourceNamespaceLabelKey   = "app.kubernetes.io/managed-by-resource-namespace"
 	namespaceFinalizer                   = "cx.liferay.com/namespace-protection"
-	controllerName                       = "liferay-cx-ns-controller"
+	controllerGroupName                  = "cx-liferay-controller-group"
+	dxpMetadataConfigMapControllerName   = "dxp-metadata-configmap-controller"
+	extensionNamespaceControllerName     = "extension-namespace-controller"
 )
 
 type RootReconciler struct {
@@ -45,18 +46,17 @@ func desiredNamespaceLabels(source *metav1.ObjectMeta, managementNamespace, virt
 	}
 
 	newLabels[liferayVirtualInstanceIdLabelKey] = virtualInstanceID
-	newLabels[managedByLabelKey] = controllerName
-	newLabels[managedByResourceLabelKey] = source.Name
-	newLabels[managedByResourceNamespaceLabelKey] = managementNamespace
+	newLabels[managedByLabelKey] = controllerGroupName
+	newLabels[managedByResourceLabelKey] = managementNamespace
 
 	return newLabels
 }
 
-func getManagedByResourceNamespaceLabel(source *metav1.ObjectMeta) string {
+func getManagedByResourceLabel(source *metav1.ObjectMeta) string {
 	if source.Labels == nil {
 		return ""
 	}
-	return source.Labels[managedByResourceNamespaceLabelKey]
+	return source.Labels[managedByResourceLabelKey]
 }
 
 func getVirtualInstanceIdLabel(source *metav1.ObjectMeta) string {

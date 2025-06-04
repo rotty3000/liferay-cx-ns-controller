@@ -53,6 +53,14 @@ func warnError(err error) {
 	_, _ = fmt.Fprintf(GinkgoWriter, "warning: %v\n", err)
 }
 
+func Kubectl(obj interface{}, args ...string) (string, error) {
+	cmd := exec.Command("kubectl", args...)
+	if obj != nil {
+		cmd.Stdin = strings.NewReader(ToYAML(obj))
+	}
+	return Run(cmd)
+}
+
 // Run executes the provided command within this context
 func Run(cmd *exec.Cmd) (string, error) {
 	dir, _ := GetProjectDir()
@@ -264,6 +272,14 @@ func UncommentCode(filename, target, prefix string) error {
 	}
 
 	return nil
+}
+
+func FromYAML(yml string, obj interface{}) {
+	err := yaml.Unmarshal([]byte(yml), obj) // nolint:staticcheck
+
+	if err != nil {
+		panic(err)
+	}
 }
 
 // ToYAML converts any object to its YAML representation

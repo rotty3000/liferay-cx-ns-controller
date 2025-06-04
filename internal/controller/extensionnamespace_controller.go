@@ -45,7 +45,7 @@ type ExtensionNamespaceReconciler struct {
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.21.0/pkg/reconcile
 func (r *ExtensionNamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	log := logf.FromContext(ctx).WithValues("namespace", req.Name)
+	log := logf.FromContext(ctx)
 
 	sourceNS := &corev1.Namespace{}
 	if err := r.Get(ctx, client.ObjectKey{Name: req.Name}, sourceNS); err != nil {
@@ -57,26 +57,31 @@ func (r *ExtensionNamespaceReconciler) Reconcile(ctx context.Context, req ctrl.R
 		return ctrl.Result{}, err
 	}
 
-	// Assertion 1: Check if this Namespace has the necessary prerequisite labels.
+	// Check if this Namespace has the necessary prerequisite labels.
 	// This is a secondary check; the predicate should be the primary filter.
 	if !hasNecessaryLabel(sourceNS) {
 		log.Info("Namespace does not have all necessary prerequisite labels, skipping", "namespace", sourceNS.Name)
 		return ctrl.Result{}, nil
 	}
 
+	if isAlreadyManaged(sourceNS) {
+		log.Info("Namespace is already managed, skipping", "namespace", sourceNS.Name)
+		return ctrl.Result{}, nil
+	}
+
 	// Extract necessary information from labels
 	nsObjectMeta := &sourceNS.ObjectMeta
-	virtualInstanceID := getVirtualInstanceIdLabel(nsObjectMeta)            // Already confirmed to exist by hasNecessaryLabel
-	managementNamespace := getManagedByResourceNamespaceLabel(nsObjectMeta) // Already confirmed to exist by hasNecessaryLabel
+	virtualInstanceID := getVirtualInstanceIdLabel(nsObjectMeta)   // Already confirmed to exist by hasNecessaryLabel
+	managementNamespace := getManagedByResourceLabel(nsObjectMeta) // Already confirmed to exist by hasNecessaryLabel
 
 	if managementNamespace == "" {
 		// This case should ideally be caught by hasNecessaryLabel if it checks for non-empty.
 		// Adding a log for safety, though hasNecessaryLabel should prevent this.
-		log.Error(fmt.Errorf("management namespace label is empty"), "Prerequisite label missing or empty", "label", managedByResourceNamespaceLabelKey)
+		log.Error(fmt.Errorf("management namespace label is empty"), "Prerequisite label missing or empty", "label", managedByResourceLabelKey)
 		return ctrl.Result{}, nil // Don't requeue if essential info is malformed.
 	}
 
-	// Assertion 2: Ensure Namespace labels are correct, specifically the 'managed-by' label for this controller.
+	// Ensure Namespace labels are correct, specifically the 'managed-by' label for this controller.
 	// Other critical labels (virtualInstanceId, managed-by-resource, managed-by-resource-namespace)
 	// are expected to be set by the DXPMetadataConfigMapReconciler.
 	currentLabels := sourceNS.GetLabels()
@@ -105,9 +110,7 @@ func (r *ExtensionNamespaceReconciler) Reconcile(ctx context.Context, req ctrl.R
 			return ctrl.Result{}, err
 		}
 		log.Info("Successfully updated Namespace labels. Requeueing.", "namespace", sourceNS.Name)
-		return ctrl.Result{Requeue: true}, nil
 	}
-	log.Info("Namespace labels related to controller management are correct.", "namespace", sourceNS.Name)
 
 	// Find a ConfigMaps in the management namespace that have the label "lxc.liferay.com/metadataType: dxp" and matching label "dxp.lxc.liferay.com/virtualInstanceId"
 	authoritativeSourceCM := &corev1.ConfigMap{}
@@ -155,7 +158,7 @@ func (r *ExtensionNamespaceReconciler) SetupWithManager(mgr ctrl.Manager, enable
 			if !ok {
 				return false
 			}
-			return hasNecessaryLabel(ns)
+			return hasNecessaryLabel(ns) && !isAlreadyManaged(ns)
 		},
 		UpdateFunc: func(e event.UpdateEvent) bool {
 			// Process if either old or new object has the labels,
@@ -164,10 +167,10 @@ func (r *ExtensionNamespaceReconciler) SetupWithManager(mgr ctrl.Manager, enable
 			newNs, newOk := e.ObjectNew.(*corev1.Namespace)
 
 			process := false
-			if oldOk && hasNecessaryLabel(oldNs) {
+			if oldOk && hasNecessaryLabel(oldNs) && !isAlreadyManaged(oldNs) {
 				process = true
 			}
-			if newOk && hasNecessaryLabel(newNs) {
+			if newOk && hasNecessaryLabel(newNs) && !isAlreadyManaged(newNs) {
 				process = true
 			}
 
@@ -182,19 +185,21 @@ func (r *ExtensionNamespaceReconciler) SetupWithManager(mgr ctrl.Manager, enable
 			if !ok {
 				return false
 			}
-			return hasNecessaryLabel(ns)
+			return hasNecessaryLabel(ns) && !isAlreadyManaged(ns)
 		},
 		GenericFunc: func(e event.GenericEvent) bool {
 			ns, ok := e.Object.(*corev1.Namespace)
 			if !ok {
 				return false
 			}
-			return hasNecessaryLabel(ns)
+			return hasNecessaryLabel(ns) && !isAlreadyManaged(ns)
 		},
 	}
 
 	// Use the manager's logger for the predicate logging
-	predicateLogger := mgr.GetLogger().WithValues("predicate_controller", controllerName)
+	predicateLogger := mgr.GetLogger().WithValues(
+		"controller", extensionNamespaceControllerName,
+	)
 	if enablePredicateLogging {
 		eventFilterPredicate = &predicatelog.LoggingPredicate{
 			OriginalPredicate: eventFilterPredicate,
@@ -204,8 +209,23 @@ func (r *ExtensionNamespaceReconciler) SetupWithManager(mgr ctrl.Manager, enable
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1.Namespace{}).
-		Named(controllerName).
+		Named(extensionNamespaceControllerName).
+		WithEventFilter(eventFilterPredicate).
 		Complete(r)
+}
+
+func isAlreadyManaged(ns *corev1.Namespace) bool {
+	labels := ns.GetLabels()
+	if labels == nil {
+		return false
+	}
+
+	managedBy, hasManagedByLabel := labels[managedByLabelKey]
+	if !hasManagedByLabel || managedBy == "" {
+		return false
+	}
+
+	return true
 }
 
 // hasNecessaryLabel checks if the Namespace has the prerequisite labels
@@ -221,8 +241,8 @@ func hasNecessaryLabel(ns *corev1.Namespace) bool {
 		return false
 	}
 
-	managedByResourceNamespace, hasManagedByResourceNamespaceLabel := labels[managedByResourceNamespaceLabelKey]
-	if !hasManagedByResourceNamespaceLabel || managedByResourceNamespace == "" {
+	managedByResource, hasManagedByResourceLabel := labels[managedByResourceLabelKey]
+	if !hasManagedByResourceLabel || managedByResource == "" {
 		return false
 	}
 

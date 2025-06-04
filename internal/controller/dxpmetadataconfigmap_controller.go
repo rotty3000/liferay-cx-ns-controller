@@ -50,7 +50,7 @@ type DXPMetadataConfigMapReconciler struct {
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
 func (r *DXPMetadataConfigMapReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	log := logf.FromContext(ctx).WithValues("configmap", req.NamespacedName)
+	log := logf.FromContext(ctx)
 
 	sourceCM := &corev1.ConfigMap{}
 	if err := r.Get(ctx, req.NamespacedName, sourceCM); err != nil {
@@ -235,14 +235,13 @@ func (r *DXPMetadataConfigMapReconciler) Reconcile(ctx context.Context, req ctrl
 
 // cleanupAssociatedNamespaces deletes all namespaces managed by this controller for a given virtualInstanceID.
 func (r *DXPMetadataConfigMapReconciler) cleanupAssociatedNamespaces(ctx context.Context, cm *corev1.ConfigMap, virtualInstanceID string, log logr.Logger) error {
-	log.Info("Listing namespaces for cleanup", "virtualInstanceID", virtualInstanceID)
+	log.Info("Listing namespaces for cleanup")
 	namespaceList := &corev1.NamespaceList{}
 	listOpts := []client.ListOption{
 		client.MatchingLabels{
-			liferayVirtualInstanceIdLabelKey:   virtualInstanceID,
-			managedByLabelKey:                  controllerName,
-			managedByResourceLabelKey:          cm.Name,
-			managedByResourceNamespaceLabelKey: cm.Namespace,
+			liferayVirtualInstanceIdLabelKey: virtualInstanceID,
+			managedByLabelKey:                controllerGroupName,
+			managedByResourceLabelKey:        cm.Namespace,
 		},
 	}
 
@@ -252,17 +251,19 @@ func (r *DXPMetadataConfigMapReconciler) cleanupAssociatedNamespaces(ctx context
 	}
 
 	if len(namespaceList.Items) == 0 {
-		log.Info("No namespaces found for cleanup associated with this virtualInstanceID")
+		log.Info("No namespaces found for cleanup")
 		return nil
 	}
+
+	log.Info("namespaces found for cleanup", "count", len(namespaceList.Items))
 
 	var errs []error
 	for _, ns := range namespaceList.Items {
 		nsToDelete := ns // Use a new variable for the loop scope
-		log.Info("Deleting namespace", "namespaceName", nsToDelete.Name)
+		log.Info("Deleting namespace", "namespace", nsToDelete.Name)
 		if err := r.Delete(ctx, &nsToDelete); err != nil {
 			if !apierrors.IsNotFound(err) { // Ignore not found errors
-				log.Error(err, "Failed to delete namespace", "namespaceName", nsToDelete.Name)
+				log.Error(err, "Failed to delete namespace", "namespace", nsToDelete.Name)
 				errs = append(errs, err)
 			}
 		}
@@ -358,7 +359,9 @@ func (r *DXPMetadataConfigMapReconciler) SetupWithManager(mgr ctrl.Manager, enab
 	}
 
 	// Use the manager's logger for the predicate logging
-	predicateLogger := mgr.GetLogger().WithValues("predicate_controller", controllerName)
+	predicateLogger := mgr.GetLogger().WithValues(
+		"controller", dxpMetadataConfigMapControllerName,
+	)
 	if enablePredicateLogging {
 		eventFilterPredicate = &predicatelog.LoggingPredicate{
 			OriginalPredicate: eventFilterPredicate,
@@ -370,8 +373,8 @@ func (r *DXPMetadataConfigMapReconciler) SetupWithManager(mgr ctrl.Manager, enab
 		For(&corev1.ConfigMap{}).
 		// We don't use Owns(&corev1.Namespace{}) because the CM no longer owns the Namespace.
 		// We also don't need Owns(&corev1.ConfigMap{}) for synced CMs, as their lifecycle is managed by the source CM's reconcile loop.
+		Named(dxpMetadataConfigMapControllerName).
 		WithEventFilter(eventFilterPredicate).
-		Named(controllerName).
 		Complete(r)
 }
 

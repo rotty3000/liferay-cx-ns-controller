@@ -200,7 +200,16 @@ func TestControllers(t *testing.T) {
 }
 
 var _ = BeforeSuite(func() {
-	// logf.SetLogger(zap.New(zap.WriteTo(GinkgoWriter), zap.UseDevMode(true))) // We'll use logTrap for the manager
+	// Initialize logTrap
+	sharedRecords := make([]Record, 0)
+	logTrap = LogTrapSink{
+		records: &sharedRecords,
+		mu:      &sync.Mutex{},
+	}
+	// Create a logger that writes to logTrap
+	testLogger := logr.New(&logTrap)
+
+	logf.SetLogger(testLogger)
 
 	ctx, cancel = context.WithCancel(context.TODO())
 
@@ -230,15 +239,6 @@ var _ = BeforeSuite(func() {
 	Expect(err).NotTo(HaveOccurred())
 	Expect(k8sClient).NotTo(BeNil())
 
-	// Initialize logTrap
-	sharedRecords := make([]Record, 0)
-	logTrap = LogTrapSink{
-		records: &sharedRecords,
-		mu:      &sync.Mutex{},
-	}
-
-	// Create a logger that writes to logTrap
-	testLogger := logr.New(&logTrap)
 	// Optionally, set the global logger if other parts of the code use logf.Log directly
 	// and you want to capture those too. For this specific problem, ensuring the manager
 	// and its derived loggers (like for the predicate) use logTrap is key.
