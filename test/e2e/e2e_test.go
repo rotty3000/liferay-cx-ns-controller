@@ -370,7 +370,8 @@ var _ = Describe("Manager", Ordered, func() {
 				// _, _ = fmt.Fprintf(
 				// 	GinkgoWriter, "=======================================\nController logs:\n %s", controllerOutput)
 
-				output, err := tutils.Kubectl(nil, "get", "ns", "--selector", "dxp.lxc.liferay.com/virtualInstanceId="+virtualInstanceId,
+				output, err := tutils.Kubectl(
+					nil, "get", "ns", "--selector", "dxp.lxc.liferay.com/virtualInstanceId="+virtualInstanceId,
 					"-o", "jsonpath={.items[0].metadata.name}")
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(output).To(Equal(expectedNamespaceName), "namespace wrong name")

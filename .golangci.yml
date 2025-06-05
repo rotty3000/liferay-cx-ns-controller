@@ -40,7 +40,7 @@ linters:
       - third_party$
       - builtin$
       - examples$
-      - internal/controller/clientextensionnamespace_controller.go
+      - internal/controller/dxpmetadataconfigmap_controller.go
 formatters:
   enable:
     - gofmt

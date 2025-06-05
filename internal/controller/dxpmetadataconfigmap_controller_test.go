@@ -170,7 +170,8 @@ var _ = Describe("DXP Metadata ConfigMap Controller", func() {
 				labelSelector := client.MatchingLabels{
 					"dxp.lxc.liferay.com/virtualInstanceId": virtualInstanceId,
 				}
-				k8sClient.List(ctx, ns, labelSelector)
+				err := k8sClient.List(ctx, ns, labelSelector)
+				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(ns.Items).To(Or(
 					BeEmpty(),
 					HaveLen(0),

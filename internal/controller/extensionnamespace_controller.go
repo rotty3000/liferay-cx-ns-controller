@@ -166,10 +166,8 @@ func (r *ExtensionNamespaceReconciler) SetupWithManager(mgr ctrl.Manager, enable
 			oldNs, oldOk := e.ObjectOld.(*corev1.Namespace)
 			newNs, newOk := e.ObjectNew.(*corev1.Namespace)
 
-			process := false
-			if oldOk && hasNecessaryLabel(oldNs) && !isAlreadyManaged(oldNs) {
-				process = true
-			}
+			process := oldOk && hasNecessaryLabel(oldNs) && !isAlreadyManaged(oldNs)
+
 			if newOk && hasNecessaryLabel(newNs) && !isAlreadyManaged(newNs) {
 				process = true
 			}
