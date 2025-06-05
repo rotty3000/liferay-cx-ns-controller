@@ -284,6 +284,10 @@ var _ = Describe("Manager", Ordered, func() {
 						ContainSubstring(cmName)))
 			}
 			Eventually(check).Should(Succeed())
+
+			// cleanup
+			_, err = tutils.Kubectl(nil, "delete", "cm", cmName, "-n", namespace, "--wait", "--timeout", "5m")
+			Expect(err).NotTo(HaveOccurred(), "Failed to delete ConfigMap", err)
 		})
 
 		It("should ignore ConfigMaps with the sync label", func() {
@@ -323,6 +327,10 @@ var _ = Describe("Manager", Ordered, func() {
 						ContainSubstring(cmName)))
 			}
 			Eventually(check).Should(Succeed())
+
+			// cleanup
+			_, err = tutils.Kubectl(nil, "delete", "cm", cmName, "-n", namespace, "--wait", "--timeout", "5m")
+			Expect(err).NotTo(HaveOccurred(), "Failed to delete ConfigMap", err)
 		})
 
 		It("should create a default client extension namespace", func() {
@@ -368,6 +376,8 @@ var _ = Describe("Manager", Ordered, func() {
 				g.Expect(output).To(Equal(expectedNamespaceName), "namespace wrong name")
 			}
 			Eventually(check).Should(Succeed())
+
+			// cleanup
 			_, err = tutils.Kubectl(nil, "delete", "cm", cmName, "-n", namespace, "--wait", "--timeout", "5m")
 			Expect(err).NotTo(HaveOccurred(), "Failed to delete ConfigMap", err)
 		})
@@ -401,6 +411,8 @@ var _ = Describe("Manager", Ordered, func() {
 						ContainSubstring(`Predicate returned false, ignoring event`),
 						ContainSubstring(nsName)))
 			}).Should(Succeed())
+
+			// cleanup
 			_, err = tutils.Kubectl(nil, "delete", "ns", nsName)
 			Expect(err).NotTo(HaveOccurred(), "Failed to delete test namespace", err)
 		})
@@ -435,6 +447,8 @@ var _ = Describe("Manager", Ordered, func() {
 						ContainSubstring(`Predicate returned false, ignoring event`),
 						ContainSubstring("extension-namespace-controller")))
 			}).Should(Succeed())
+
+			// cleanup
 			_, err = tutils.Kubectl(nil, "delete", "ns", nsName)
 			Expect(err).NotTo(HaveOccurred(), "Failed to delete test namespace", err)
 		})
@@ -469,6 +483,8 @@ var _ = Describe("Manager", Ordered, func() {
 						ContainSubstring(`Predicate returned false, ignoring event`),
 						ContainSubstring("extension-namespace-controller")))
 			}).Should(Succeed())
+
+			// cleanup
 			_, err = tutils.Kubectl(nil, "delete", "ns", nsName)
 			Expect(err).NotTo(HaveOccurred(), "Failed to delete test namespace", err)
 		})
@@ -536,8 +552,10 @@ var _ = Describe("Manager", Ordered, func() {
 					"dxp.lxc.liferay.com/virtualInstanceId":          Equal(virtualInstanceId),
 				}))
 			}).Should(Succeed())
-			_, err = tutils.Kubectl(nil, "delete", "ns", nsName)
-			Expect(err).NotTo(HaveOccurred(), "Failed to delete test namespace", err)
+
+			// cleanup
+			_, err = tutils.Kubectl(nil, "delete", "cm", cmName, "-n", namespace, "--wait", "--timeout", "5m")
+			Expect(err).NotTo(HaveOccurred(), "Failed to delete ConfigMap", err)
 		})
 	})
 })
